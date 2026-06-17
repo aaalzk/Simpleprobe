@@ -90,6 +90,124 @@ interval: 30
 
 浏览器打开 `https://probe.your-domain.com` 即可查看监控面板。
 
+## 反向代理
+
+Server 默认监听 `:8080`，可以通过 Nginx 或 Caddy 反向代理来提供 HTTPS、访问控制和静态资源缓存。
+
+### 前置准备：让 Server 仅监听本地
+
+如果机器上已有 Nginx/Caddy 处理 HTTPS，建议让 Server 只监听 127.0.0.1，避免端口直接暴露：
+
+```yaml
+# server.yml
+listen: "127.0.0.1:8080"
+```
+
+### Nginx 反向代理
+
+```nginx
+# /etc/nginx/sites-available/probe
+server {
+    listen 80;
+    server_name probe.your-domain.com;
+
+    # 可选：basic auth 保护 Dashboard
+    # auth_basic "Simpleprobe";
+    # auth_basic_user_file /etc/nginx/.htpasswd;
+
+    # Dashboard 和 API
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 长轮询支持（Dashboard 刷新间隔 10s）
+        proxy_read_timeout 30s;
+    }
+
+    # Agent 上报接口需要更大的 body 和超时
+    location /api/report {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+        client_max_body_size 64k;
+    }
+}
+```
+
+启用站点并获取证书（假设用 certbot）：
+
+```bash
+sudo ln -s /etc/nginx/sites-available/probe /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d probe.your-domain.com
+```
+
+### Caddy 反向代理
+
+Caddyfile 只需一行，自动申请和续期 TLS 证书：
+
+```caddy
+# /etc/caddy/Caddyfile
+probe.your-domain.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+带 basic auth 保护 Dashboard：
+
+```caddy
+probe.your-domain.com {
+    reverse_proxy 127.0.0.1:8080
+    basicauth {
+        admin $2a$14$P7L5V8...  # 用 caddy hash-password 生成
+    }
+}
+```
+
+```bash
+sudo systemctl reload caddy
+```
+
+> **注意**：反向代理配置完成后，Dashboard 仍然通过 Cloudflare DNS 访问。Cloudflare 处理跨国流量加速，Nginx/Caddy 处理本地反向代理和 TLS。
+
+## 使用 systemd 管理 Server
+
+```ini
+# /etc/systemd/system/simpleprobe-server.service
+[Unit]
+Description=Simpleprobe Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+ExecStart=/usr/local/bin/simpleprobe-server -c /etc/probe/server.yml
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/probe
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo mkdir -p /var/lib/probe
+sudo chown www-data:www-data /var/lib/probe
+# 在 server.yml 中设置 db_path: "/var/lib/probe/probe.db"
+sudo systemctl daemon-reload
+sudo systemctl enable --now simpleprobe-server
+```
+
 ## 使用 systemd 管理 Agent
 
 ```ini

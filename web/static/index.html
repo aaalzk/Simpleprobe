@@ -71,7 +71,26 @@ tr.empty-row td{text-align:center;color:var(--text-dim);padding:32px}
 .alert-time{color:var(--text-dim);white-space:nowrap}
 .chart-wrap{position:relative;height:300px;max-height:60vh}
 footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
-@media(max-width:768px){.summary{grid-template-columns:repeat(2,1fr)}.container{padding:8px 12px}table{font-size:.8rem}th,td{padding:6px 8px}}
+/* Mobile card view */
+.server-cards{display:none}
+.server-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer}
+.server-card:hover{background:#22263a}
+.server-card.selected{background:#1e2a4a;border-color:var(--blue)}
+.server-card .sc-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.server-card .sc-name{font-weight:600;font-size:.95rem}
+.server-card .sc-os{color:var(--text-dim);font-size:.75rem}
+.server-card .sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:.8rem}
+.server-card .sc-item{display:flex;justify-content:space-between;align-items:center}
+.server-card .sc-label{color:var(--text-dim)}
+.server-card .sc-net{font-size:.8rem}
+.server-card .sc-footer{display:flex;justify-content:space-between;margin-top:8px;font-size:.75rem;color:var(--text-dim)}
+.server-card .bar-wrap{width:60px;height:5px}
+@media(max-width:768px){
+.summary{grid-template-columns:repeat(2,1fr)}
+.container{padding:8px 12px}
+.table-wrapper{display:none}
+.server-cards{display:block}
+}
 </style>
 </head>
 <body>
@@ -89,6 +108,7 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <tbody id="server-tbody"><tr class="empty-row"><td colspan="10">等待数据...</td></tr></tbody>
 </table>
 </div>
+<div class="server-cards" id="server-cards"></div>
 <div class="chart-panel" id="chart-panel" style="display:none">
 <div class="chart-header">
 <h3 id="chart-title">历史趋势</h3>
@@ -121,10 +141,12 @@ try{var r=await fetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);ren
 }
 function renderServers(s){
 var tb=document.getElementById('server-tbody');
+var cards=document.getElementById('server-cards');
 document.getElementById('count-online').textContent=s.filter(function(x){return x.status==='online'}).length;
 document.getElementById('count-offline').textContent=s.filter(function(x){return x.status!=='online'}).length;
 document.getElementById('count-total').textContent=s.length;
-if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">暂无服务器数据</td></tr>';return}
+if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">暂无服务器数据</td></tr>';cards.innerHTML='';return}
+// Table (desktop)
 tb.innerHTML=s.map(function(x){
 var sc=x.status==='online'?'online':'offline';
 var bc=function(v){return v>90?'high':v>70?'mid':'low'};
@@ -139,23 +161,40 @@ return '<tr class="server-row'+(selSrv===x.name?' selected':'')+'" data-name="'+
 '<td>'+x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1)+'</td>'+
 '<td>'+fmtUptime(x.uptime)+'</td><td>'+fmtAgo(x.last_seen)+'</td></tr>';
 }).join('');
-tb.querySelectorAll('.server-row').forEach(function(r){
-r.addEventListener('click',function(){
-var n=r.dataset.name;
-if(selSrv===n)closeChart();else selectServer(n);
-});
-});
+// Cards (mobile)
+cards.innerHTML=s.map(function(x){
+var sc=x.status==='online'?'online':'offline';
+var bc=function(v){return v>90?'high':v>70?'mid':'low'};
+return '<div class="server-card'+(selSrv===x.name?' selected':'')+'" data-name="'+esc(x.name)+'">'+
+'<div class="sc-header"><span class="status-dot '+sc+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.os_name||'')+'</div></div></div>'+
+'<div class="sc-grid">'+
+'<div class="sc-item"><span class="sc-label">CPU</span><span><div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(x.cpu_percent)+'" style="width:'+Math.min(x.cpu_percent,100)+'%"></div></div> '+x.cpu_percent.toFixed(1)+'%</span></div>'+
+'<div class="sc-item"><span class="sc-label">内存</span><span><div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(x.mem_percent)+'" style="width:'+Math.min(x.mem_percent,100)+'%"></div></div> '+x.mem_percent.toFixed(1)+'%</span></div>'+
+'<div class="sc-item"><span class="sc-label">磁盘</span><span><div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(x.disk_percent)+'" style="width:'+Math.min(x.disk_percent,100)+'%"></div></div> '+x.disk_percent.toFixed(1)+'%</span></div>'+
+'<div class="sc-item"><span class="sc-label">负载</span><span>'+x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">网络 ↓</span><span class="sc-net rx">'+fmtRate(x.net_rx_rate)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">网络 ↑</span><span class="sc-net tx">'+fmtRate(x.net_tx_rate)+'</span></div>'+
+'</div>'+
+'<div class="sc-footer"><span>在线 '+fmtUptime(x.uptime)+'</span><span>'+fmtAgo(x.last_seen)+'</span></div>'+
+'</div>';
+}).join('');
+// Click handlers for both table and cards
+var rows=document.querySelectorAll('.server-row');
+var cardEls=document.querySelectorAll('.server-card');
+function clickHandler(n){if(selSrv===n)closeChart();else selectServer(n);}
+rows.forEach(function(r){r.addEventListener('click',function(){clickHandler(r.dataset.name)})});
+cardEls.forEach(function(c){c.addEventListener('click',function(){clickHandler(c.dataset.name)})});
 }
 function selectServer(n){
 selSrv=n;document.getElementById('chart-title').textContent='历史趋势 - '+n;
 document.getElementById('chart-panel').style.display='block';
-document.querySelectorAll('.server-row').forEach(function(r){r.classList.toggle('selected',r.dataset.name===n)});
+document.querySelectorAll('.server-row,.server-card').forEach(function(r){r.classList.toggle('selected',r.dataset.name===n)});
 refreshChart();
 }
 function closeChart(){
 selSrv=null;document.getElementById('chart-panel').style.display='none';
 if(chartInst){chartInst.destroy();chartInst=null}
-document.querySelectorAll('.server-row').forEach(function(r){r.classList.remove('selected')});
+document.querySelectorAll('.server-row,.server-card').forEach(function(r){r.classList.remove('selected')});
 }
 async function refreshChart(){
 if(!selSrv)return;

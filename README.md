@@ -186,24 +186,21 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
 ExecStart=/usr/local/bin/simpleprobe-server -c /etc/probe/server.yml
 Restart=always
 RestartSec=5
 
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/probe
+# 以下为可选的安全加固，如遇到 203/EXEC 错误可注释掉
+# NoNewPrivileges=yes
+# ProtectSystem=strict
+# ProtectHome=yes
+# ReadWritePaths=/var/lib/probe
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
-sudo mkdir -p /var/lib/probe
-sudo chown www-data:www-data /var/lib/probe
-# 在 server.yml 中设置 db_path: "/var/lib/probe/probe.db"
 sudo systemctl daemon-reload
 sudo systemctl enable --now simpleprobe-server
 ```

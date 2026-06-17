@@ -51,11 +51,6 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
-release:
-  github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: "{{ .Env.GITHUB_REPOSITORY }}"
-
 changelog:
   sort: asc
   filters:

@@ -2,17 +2,16 @@ package web
 
 import (
 	"embed"
-	"mime"
+	"io/fs"
 	"net/http"
 	"path/filepath"
-	"strings"
 )
 
-//go:embed static/*
+//go:embed static
 var staticFS embed.FS
 
 // mimeTypes maps file extensions to Content-Type values.
-// Explicitly set to avoid relying on the OS mime database.
+// Explicitly set to avoid relying on OS mime database in embedded FS.
 var mimeTypes = map[string]string{
 	".html": "text/html; charset=utf-8",
 	".css":  "text/css; charset=utf-8",
@@ -26,29 +25,23 @@ var mimeTypes = map[string]string{
 // Handler returns an http.Handler that serves the embedded static files
 // with correct Content-Type headers.
 func Handler() http.Handler {
+	sub, _ := fs.Sub(staticFS, "static")
+	fileServer := http.FileServer(http.FS(sub))
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Prevent directory listing
-		if r.URL.Path == "/" || strings.HasSuffix(r.URL.Path, "/") {
-			r.URL.Path = "/index.html"
-		}
-
-		path := "static" + r.URL.Path
-		data, err := staticFS.ReadFile(path)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-
+		// Set correct Content-Type based on file extension
 		ext := filepath.Ext(r.URL.Path)
-		contentType := mimeTypes[ext]
-		if contentType == "" {
-			contentType = mime.TypeByExtension(ext)
-		}
-		if contentType == "" {
-			contentType = "application/octet-stream"
+		if ct, ok := mimeTypes[ext]; ok {
+			w.Header().Set("Content-Type", ct)
 		}
 
-		w.Header().Set("Content-Type", contentType)
-		w.Write(data)
+		// Serve index.html for root path
+		if r.URL.Path == "/" || r.URL.Path == "" {
+			r.URL.Path = "/index.html"
+			// Re-set content type for index.html
+			w.Header().Set("Content-Type", mimeTypes[".html"])
+		}
+
+		fileServer.ServeHTTP(w, r)
 	})
 }

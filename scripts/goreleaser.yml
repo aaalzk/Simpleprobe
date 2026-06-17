@@ -1,4 +1,4 @@
-# Goreleaser configuration for sysprobe
+# Goreleaser configuration for Simpleprobe (简易探针)
 # Run: goreleaser release --clean
 
 version: 1
@@ -10,7 +10,7 @@ before:
 builds:
   - id: agent
     main: ./cmd/agent
-    binary: probe-agent
+    binary: simpleprobe-agent
     env:
       - CGO_ENABLED=0
     goos:
@@ -23,7 +23,7 @@ builds:
 
   - id: server
     main: ./cmd/server
-    binary: probe-server
+    binary: simpleprobe-server
     env:
       - CGO_ENABLED=0
     goos:
@@ -37,14 +37,14 @@ builds:
 archives:
   - id: agent
     builds: [agent]
-    name_template: "probe-agent_{{ .Version }}_{{ .Arch }}"
+    name_template: "simpleprobe-agent_{{ .Version }}_{{ .Arch }}"
     format: tar.gz
     files:
       - agent.yml.example
 
   - id: server
     builds: [server]
-    name_template: "probe-server_{{ .Version }}_{{ .Arch }}"
+    name_template: "simpleprobe-server_{{ .Version }}_{{ .Arch }}"
     format: tar.gz
     files:
       - server.yml.example

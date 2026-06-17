@@ -1,6 +1,6 @@
-# SysProbe — 轻量级 Linux 服务器探针
+# 简易探针 (Simpleprobe)
 
-类似 ServerStatus 的服务器监控系统，专为跨国网络不稳定场景设计。
+类似 ServerStatus 的轻量级 Linux 服务器探针系统，专为跨国网络不稳定场景设计。
 
 ## 特性
 
@@ -26,15 +26,15 @@ Agent (Linux) ──HTTPS POST──> Cloudflare DNS ──> Server (Go) + SQLit
 
 ```bash
 # 下载 server 二进制
-wget https://github.com/xxx/probe/releases/latest/download/probe-server-linux-amd64.tar.gz
-tar xzf probe-server-linux-amd64.tar.gz
+wget https://github.com/aaalzk/Simpleprobe/releases/latest/download/simpleprobe-server-linux-amd64.tar.gz
+tar xzf simpleprobe-server-linux-amd64.tar.gz
 
 # 编辑配置
 cp server.yml.example server.yml
 vim server.yml
 
 # 启动
-./probe-server -c server.yml
+./simpleprobe-server -c server.yml
 ```
 
 Server 配置示例 (`server.yml`):
@@ -62,15 +62,15 @@ history_retention_hours: 72
 
 ```bash
 # 下载 agent 二进制
-wget https://github.com/xxx/probe/releases/latest/download/probe-agent-linux-amd64.tar.gz
-tar xzf probe-agent-linux-amd64.tar.gz
+wget https://github.com/aaalzk/Simpleprobe/releases/latest/download/simpleprobe-agent-linux-amd64.tar.gz
+tar xzf simpleprobe-agent-linux-amd64.tar.gz
 
 # 编辑配置
 cp agent.yml.example agent.yml
 vim agent.yml
 
 # 启动（推荐使用 systemd 管理）
-./probe-agent -c agent.yml
+./simpleprobe-agent -c agent.yml
 ```
 
 Agent 配置示例 (`agent.yml`):
@@ -93,14 +93,14 @@ interval: 30
 ## 使用 systemd 管理 Agent
 
 ```ini
-# /etc/systemd/system/probe-agent.service
+# /etc/systemd/system/simpleprobe-agent.service
 [Unit]
-Description=SysProbe Agent
+Description=Simpleprobe Agent
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/probe-agent -c /etc/probe/agent.yml
+ExecStart=/usr/local/bin/simpleprobe-agent -c /etc/probe/agent.yml
 Restart=always
 RestartSec=10
 
@@ -110,15 +110,15 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now probe-agent
+sudo systemctl enable --now simpleprobe-agent
 ```
 
 ## 从源码编译
 
 ```bash
 # 需要 Go 1.21+
-git clone https://github.com/xxx/probe.git
-cd probe
+git clone https://github.com/aaalzk/Simpleprobe.git
+cd Simpleprobe
 
 # 编译所有平台
 make build

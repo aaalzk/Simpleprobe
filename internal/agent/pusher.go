@@ -22,7 +22,7 @@ func NewPusher(serverURL, token, version string) *Pusher {
 	return &Pusher{
 		serverURL: serverURL,
 		token:     token,
-		userAgent: "sysprobe-agent/" + version,
+		userAgent: "simpleprobe-agent/" + version,
 		client: &http.Client{
 			Timeout: 15 * time.Second,
 		},

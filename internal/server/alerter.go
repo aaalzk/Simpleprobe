@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sysprobe/probe/internal/config"
+	"github.com/aaalzk/Simpleprobe/internal/config"
 )
 
 // Alerter monitors server states and sends alerts via Gotify.

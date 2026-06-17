@@ -1,4 +1,4 @@
-# Server configuration for sysprobe
+# Server configuration for Simpleprobe (简易探针)
 listen: ":8080"                  # Listen address
 db_path: "./probe.db"            # SQLite database path
 token: "change-me"               # Shared secret between agent and server

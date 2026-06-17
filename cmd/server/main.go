@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sysprobe/probe/internal/config"
-	"github.com/sysprobe/probe/internal/server"
-	"github.com/sysprobe/probe/web"
+	"github.com/aaalzk/Simpleprobe/internal/config"
+	"github.com/aaalzk/Simpleprobe/internal/server"
+	"github.com/aaalzk/Simpleprobe/web"
 )
 
 var version = "1.0.0"
@@ -23,7 +23,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("sysprobe-server", version)
+		fmt.Println("simpleprobe-server", version)
 		os.Exit(0)
 	}
 
@@ -69,7 +69,7 @@ func main() {
 	mux.Handle("/", web.Handler())
 
 	// Start HTTP server
-	log.Printf("sysprobe-server %s starting", version)
+	log.Printf("simpleprobe-server %s starting", version)
 	log.Printf("  Listen: %s", cfg.Listen)
 	log.Printf("  DB:     %s", cfg.DBPath)
 	log.Printf("  Gotify: %s (configured: %v)", cfg.Gotify.URL, cfg.Gotify.URL != "")

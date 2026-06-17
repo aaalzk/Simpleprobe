@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sysprobe/probe/internal/agent"
-	"github.com/sysprobe/probe/internal/config"
+	"github.com/aaalzk/Simpleprobe/internal/agent"
+	"github.com/aaalzk/Simpleprobe/internal/config"
 )
 
 var version = "1.0.0"
@@ -21,7 +21,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("sysprobe-agent", version)
+		fmt.Println("simpleprobe-agent", version)
 		os.Exit(0)
 	}
 
@@ -34,7 +34,7 @@ func main() {
 		log.Println("WARNING: using default token 'change-me' — please set a secure token in agent.yml")
 	}
 
-	log.Printf("sysprobe-agent %s starting", version)
+	log.Printf("simpleprobe-agent %s starting", version)
 	log.Printf("  Server: %s", cfg.ServerURL)
 	log.Printf("  Name:   %s", cfg.Name)
 	log.Printf("  Interval: %ds", cfg.Interval)

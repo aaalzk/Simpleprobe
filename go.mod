@@ -1,4 +1,4 @@
-module github.com/sysprobe/probe
+module github.com/aaalzk/Simpleprobe
 
 go 1.21
 

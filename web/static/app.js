@@ -1,4 +1,4 @@
-// SysProbe Dashboard - Main Application
+// Simpleprobe (简易探针) Dashboard - Main Application
 (function() {
   'use strict';
 

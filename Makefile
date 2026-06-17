@@ -4,17 +4,17 @@
 build: build-agent build-server
 
 build-agent:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/probe-agent-linux-amd64 ./cmd/agent/
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/probe-agent-linux-arm64 ./cmd/agent/
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/simpleprobe-agent-linux-amd64 ./cmd/agent/
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/simpleprobe-agent-linux-arm64 ./cmd/agent/
 
 build-server:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/probe-server-linux-amd64 ./cmd/server/
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/probe-server-linux-arm64 ./cmd/server/
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/simpleprobe-server-linux-amd64 ./cmd/server/
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/simpleprobe-server-linux-arm64 ./cmd/server/
 
 # Build for local testing
 build-local:
-	go build -o dist/probe-agent ./cmd/agent/
-	go build -o dist/probe-server ./cmd/server/
+	go build -o dist/simpleprobe-agent ./cmd/agent/
+	go build -o dist/simpleprobe-server ./cmd/server/
 
 clean:
 	rm -rf dist/

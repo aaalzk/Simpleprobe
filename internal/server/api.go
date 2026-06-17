@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sysprobe/probe/internal/agent"
+	"github.com/aaalzk/Simpleprobe/internal/agent"
 )
 
 // APIHandler holds dependencies for the HTTP API.

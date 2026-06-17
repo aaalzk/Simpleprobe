@@ -1,0 +1,5 @@
+# Agent configuration for sysprobe
+server_url: "https://probe.example.com"  # Server URL (behind Cloudflare)
+name: "my-server"                        # Unique server name
+token: "change-me"                       # Shared secret
+interval: 30                             # Report interval in seconds

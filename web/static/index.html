@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SysProbe - 服务器监控</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🖥️ SysProbe</h1>
+    <span id="clock">--</span>
+  </header>
+
+  <!-- Summary Cards -->
+  <div class="summary">
+    <div class="card online">
+      <div class="card-value" id="count-online">0</div>
+      <div class="card-label">在线</div>
+    </div>
+    <div class="card offline">
+      <div class="card-value" id="count-offline">0</div>
+      <div class="card-label">离线</div>
+    </div>
+    <div class="card total">
+      <div class="card-value" id="count-total">0</div>
+      <div class="card-label">总计</div>
+    </div>
+    <div class="card alerts">
+      <div class="card-value" id="count-alerts">0</div>
+      <div class="card-label">告警 (24h)</div>
+    </div>
+  </div>
+
+  <!-- Server Table -->
+  <div class="table-wrapper">
+    <table id="server-table">
+      <thead>
+        <tr>
+          <th>状态</th>
+          <th>名称</th>
+          <th>CPU</th>
+          <th>内存</th>
+          <th>磁盘</th>
+          <th>网络 ↓</th>
+          <th>网络 ↑</th>
+          <th>负载</th>
+          <th>在线时长</th>
+          <th>最后上报</th>
+        </tr>
+      </thead>
+      <tbody id="server-tbody">
+        <tr class="empty-row"><td colspan="10">等待数据...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Chart Panel -->
+  <div class="chart-panel" id="chart-panel" style="display:none">
+    <div class="chart-header">
+      <h3 id="chart-title">历史趋势</h3>
+      <div class="chart-controls">
+        <select id="chart-metric">
+          <option value="cpu_percent">CPU</option>
+          <option value="mem_percent">内存</option>
+          <option value="disk_percent">磁盘</option>
+          <option value="net_rx_rate">网络入站</option>
+          <option value="net_tx_rate">网络出站</option>
+          <option value="load_1">负载 1min</option>
+        </select>
+        <select id="chart-hours">
+          <option value="1">1小时</option>
+          <option value="6">6小时</option>
+          <option value="24" selected>24小时</option>
+          <option value="72">72小时</option>
+        </select>
+        <button id="chart-close" class="btn-close">✕ 关闭</button>
+      </div>
+    </div>
+    <canvas id="history-chart" height="80"></canvas>
+  </div>
+
+  <!-- Alert History -->
+  <div class="alerts-panel">
+    <h3>📢 最近告警</h3>
+    <div id="alert-list" class="alert-list">--</div>
+  </div>
+
+  <footer>
+    SysProbe v1.0.0 · 刷新间隔 10s
+  </footer>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

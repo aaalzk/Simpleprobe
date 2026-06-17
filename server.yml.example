@@ -1,0 +1,19 @@
+# Server configuration for sysprobe
+listen: ":8080"                  # Listen address
+db_path: "./probe.db"            # SQLite database path
+token: "change-me"               # Shared secret between agent and server
+
+# Gotify notification settings
+gotify:
+  url: "https://gotify.example.com"
+  token: "your-gotify-app-token"
+
+# Alert thresholds
+alerts:
+  offline_seconds: 90            # Mark offline after this many seconds without report
+  cpu_threshold: 90              # Alert when CPU% exceeds this value
+  traffic_rx_mbps: 800           # Alert when Rx traffic (Mbps) exceeds this value
+  traffic_tx_mbps: 800           # Alert when Tx traffic (Mbps) exceeds this value
+  cooldown_seconds: 300          # Minimum seconds between same-type alerts per server
+
+history_retention_hours: 72      # How long to keep historical data

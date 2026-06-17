@@ -1,0 +1,66 @@
+# Goreleaser configuration for sysprobe
+# Run: goreleaser release --clean
+
+version: 1
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agent
+    main: ./cmd/agent
+    binary: probe-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: server
+    main: ./cmd/server
+    binary: probe-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: agent
+    builds: [agent]
+    name_template: "probe-agent_{{ .Version }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - agent.yml.example
+
+  - id: server
+    builds: [server]
+    name_template: "probe-server_{{ .Version }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - server.yml.example
+
+checksum:
+  name_template: 'checksums.txt'
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: "{{ .Env.GITHUB_REPOSITORY }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'

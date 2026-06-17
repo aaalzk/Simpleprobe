@@ -69,6 +69,7 @@ tr.empty-row td{text-align:center;color:var(--text-dim);padding:32px}
 .alert-type.cpu{background:#1e1e3d;color:var(--blue)}
 .alert-type.traffic_rx,.alert-type.traffic_tx{background:#3d2e1e;color:var(--yellow)}
 .alert-time{color:var(--text-dim);white-space:nowrap}
+.chart-wrap{position:relative;height:300px;max-height:60vh}
 footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 @media(max-width:768px){.summary{grid-template-columns:repeat(2,1fr)}.container{padding:8px 12px}table{font-size:.8rem}th,td{padding:6px 8px}}
 </style>
@@ -97,7 +98,7 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <button id="chart-close" class="btn-close">✕ 关闭</button>
 </div>
 </div>
-<canvas id="history-chart" height="80"></canvas>
+<div class="chart-wrap"><canvas id="history-chart"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
 <footer>Simpleprobe v1.0.0 · 刷新间隔 10s</footer>
@@ -198,7 +199,9 @@ if(d>0)return d+'d '+h+'h';if(h>0)return h+'h '+m+'m';return m+'m';
 }
 function fmtAgo(t){
 if(!t)return '--';
-var s=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);
+var d=new Date(t);
+if(isNaN(d.getTime()))return '--';
+var s=Math.floor((Date.now()-d.getTime())/1000);
 if(s<5)return '刚刚';if(s<60)return s+'秒前';if(s<3600)return Math.floor(s/60)+'分钟前';if(s<86400)return Math.floor(s/3600)+'小时前';return Math.floor(s/86400)+'天前';
 }
 function esc(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML}

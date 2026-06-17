@@ -26,8 +26,8 @@ Agent (Linux) ──HTTPS POST──> Cloudflare DNS ──> Server (Go) + SQLit
 
 ```bash
 # 下载 server 二进制
-wget https://github.com/aaalzk/Simpleprobe/releases/latest/download/simpleprobe-server-linux-amd64.tar.gz
-tar xzf simpleprobe-server-linux-amd64.tar.gz
+wget https://github.com/aaalzk/Simpleprobe/releases/latest/download/simpleprobe-server_linux_amd64.tar.gz
+tar xzf simpleprobe-server_linux_amd64.tar.gz
 
 # 编辑配置
 cp server.yml.example server.yml
@@ -62,8 +62,8 @@ history_retention_hours: 72
 
 ```bash
 # 下载 agent 二进制
-wget https://github.com/aaalzk/Simpleprobe/releases/latest/download/simpleprobe-agent-linux-amd64.tar.gz
-tar xzf simpleprobe-agent-linux-amd64.tar.gz
+wget https://github.com/aaalzk/Simpleprobe/releases/latest/download/simpleprobe-agent_linux_amd64.tar.gz
+tar xzf simpleprobe-agent_linux_amd64.tar.gz
 
 # 编辑配置
 cp agent.yml.example agent.yml
@@ -89,6 +89,21 @@ interval: 30
 ### 4. 访问 Dashboard
 
 浏览器打开 `https://probe.your-domain.com` 即可查看监控面板。
+
+### 升级
+
+解压后的压缩包自带升级脚本，使用 systemd 管理时可直接运行：
+
+```bash
+# 升级 Server 到最新版
+sudo ./upgrade-server.sh
+
+# 升级 Agent 到最新版
+sudo ./upgrade-agent.sh
+
+# 升级到指定版本
+sudo ./upgrade-agent.sh v1.0.6
+```
 
 ## 反向代理
 

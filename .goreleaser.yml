@@ -36,17 +36,19 @@ builds:
 archives:
   - id: agent
     builds: [agent]
-    name_template: "simpleprobe-agent_{{ .Version }}_{{ .Arch }}"
+    name_template: "simpleprobe-agent_{{ .Version }}_linux_{{ .Arch }}"
     format: tar.gz
     files:
       - agent.yml.example
+      - scripts/upgrade-agent.sh
 
   - id: server
     builds: [server]
-    name_template: "simpleprobe-server_{{ .Version }}_{{ .Arch }}"
+    name_template: "simpleprobe-server_{{ .Version }}_linux_{{ .Arch }}"
     format: tar.gz
     files:
       - server.yml.example
+      - scripts/upgrade-server.sh
 
 checksum:
   name_template: 'checksums.txt'

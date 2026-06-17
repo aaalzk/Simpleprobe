@@ -158,10 +158,10 @@ func (s *Store) UpsertServer(name string, cpuPct, memPct float64, memTotal, memU
 	query := `INSERT INTO servers (name, status, last_seen, cpu_percent, mem_percent, mem_total, mem_used,
 		disk_percent, disk_total, disk_used, net_rx_rate, net_tx_rate, net_rx_bytes, net_tx_bytes,
 		load_1, load_5, load_15, uptime, tcp_conns, process_count, os_name, kernel_version)
-		VALUES (?, 'online', CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, 'online', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			status        = 'online',
-			last_seen     = CURRENT_TIMESTAMP,
+			last_seen     = excluded.last_seen,
 			cpu_percent   = excluded.cpu_percent,
 			mem_percent   = excluded.mem_percent,
 			mem_total     = excluded.mem_total,
@@ -182,7 +182,8 @@ func (s *Store) UpsertServer(name string, cpuPct, memPct float64, memTotal, memU
 			os_name       = excluded.os_name,
 			kernel_version = excluded.kernel_version`
 
-	_, err := s.db.Exec(query, name, cpuPct, memPct, memTotal, memUsed,
+	now := time.Now().UTC()
+	_, err := s.db.Exec(query, name, now, cpuPct, memPct, memTotal, memUsed,
 		diskPct, diskTotal, diskUsed, netRxRate, netTxRate, netRxBytes, netTxBytes,
 		load1, load5, load15, uptime, tcpConns, procCount, osName, kernelVer)
 	return err
@@ -203,7 +204,7 @@ func (s *Store) InsertReport(name string, cpuPct, memPct, diskPct, netRxRate, ne
 // MarkOffline marks servers that haven't reported within the specified duration as offline.
 // Returns the names of servers that were just marked offline.
 func (s *Store) MarkOffline(timeoutSeconds int) ([]string, error) {
-	cutoff := time.Now().Add(-time.Duration(timeoutSeconds) * time.Second)
+	cutoff := time.Now().UTC().Add(-time.Duration(timeoutSeconds) * time.Second)
 
 	// First, find servers that are online but past the cutoff
 	rows, err := s.db.Query(`SELECT name FROM servers WHERE status = 'online' AND last_seen < ?`, cutoff)
@@ -285,7 +286,7 @@ func (s *Store) GetServerByName(name string) (*ServerRecord, error) {
 
 // GetHistory returns historical reports for a server within the given time window.
 func (s *Store) GetHistory(name string, hours int) ([]ReportRecord, error) {
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	cutoff := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
 	query := `SELECT id, server_name, timestamp, cpu_percent, mem_percent, disk_percent,
 		net_rx_rate, net_tx_rate, load_1, load_5, load_15
 		FROM reports WHERE server_name = ? AND timestamp >= ?
@@ -360,7 +361,7 @@ func (s *Store) SetAlertCooldown(serverName, alertType string) error {
 
 // CleanupOldReports removes reports older than the specified number of hours.
 func (s *Store) CleanupOldReports(retentionHours int) error {
-	cutoff := time.Now().Add(-time.Duration(retentionHours) * time.Hour)
+	cutoff := time.Now().UTC().Add(-time.Duration(retentionHours) * time.Hour)
 	_, err := s.db.Exec(`DELETE FROM reports WHERE timestamp < ?`, cutoff)
 	return err
 }

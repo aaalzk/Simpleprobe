@@ -59,6 +59,10 @@ func (a *Alerter) scanOffline() {
 // SendRecoveryAlert sends a recovery notification when a previously offline
 // server comes back online. Called by the API handler before upserting.
 func (a *Alerter) SendRecoveryAlert(name string) {
+	// Check cooldown to avoid flooding recovery alerts
+	if a.store.CheckAlertCooldown(name, "online", a.cfg.CooldownSeconds) {
+		return
+	}
 	msg := fmt.Sprintf("服务器 %s 已恢复上线", name)
 	a.sendAlert(name, "online", msg)
 }
@@ -110,15 +114,23 @@ func (a *Alerter) sendAlert(serverName, alertType, message string) {
 		return
 	}
 
-	payload := map[string]string{
+	payload := map[string]interface{}{
 		"title":    fmt.Sprintf("[%s] %s", alertType, serverName),
 		"message":  message,
-		"priority": "5",
+		"priority": 5,
 	}
 	body, _ := json.Marshal(payload)
 
-	url := a.gotify.URL + "/message?token=" + a.gotify.Token
-	resp, err := a.client.Post(url, "application/json", bytes.NewReader(body))
+	url := a.gotify.URL + "/message"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("ERROR: gotify request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gotify-Key", a.gotify.Token)
+
+	resp, err := a.client.Do(req)
 	if err != nil {
 		log.Printf("ERROR: gotify push: %v", err)
 		return

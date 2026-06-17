@@ -36,7 +36,7 @@ builds:
 archives:
   - id: agent
     builds: [agent]
-    name_template: "simpleprobe-agent_{{ .Version }}_linux_{{ .Arch }}"
+    name_template: "simpleprobe-agent_linux_{{ .Arch }}"
     format: tar.gz
     files:
       - agent.yml.example
@@ -44,7 +44,7 @@ archives:
 
   - id: server
     builds: [server]
-    name_template: "simpleprobe-server_{{ .Version }}_linux_{{ .Arch }}"
+    name_template: "simpleprobe-server_linux_{{ .Arch }}"
     format: tar.gz
     files:
       - server.yml.example

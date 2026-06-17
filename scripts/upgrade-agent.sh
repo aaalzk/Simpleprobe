@@ -15,11 +15,7 @@ case "$ARCH" in
 esac
 
 VERSION="${1:-latest}"
-if [ "$VERSION" = "latest" ]; then
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/simpleprobe-agent_linux_${ARCH}.tar.gz"
-else
-  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/simpleprobe-agent_${VERSION#v}_linux_${ARCH}.tar.gz"
-fi
+DOWNLOAD_URL="https://github.com/${REPO}/releases/${VERSION}/download/simpleprobe-agent_linux_${ARCH}.tar.gz"
 
 echo ">>> 下载: $DOWNLOAD_URL"
 TMPDIR=$(mktemp -d)

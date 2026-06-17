@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aaalzk/Simpleprobe/internal/config"
@@ -118,10 +120,11 @@ func (a *Alerter) sendAlert(serverName, alertType, message string) {
 		"title":    fmt.Sprintf("[%s] %s", alertType, serverName),
 		"message":  message,
 		"priority": 5,
+		"extras":   map[string]interface{}{},
 	}
 	body, _ := json.Marshal(payload)
 
-	url := a.gotify.URL + "/message"
+	url := strings.TrimRight(a.gotify.URL, "/") + "/message"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("ERROR: gotify request: %v", err)
@@ -138,6 +141,7 @@ func (a *Alerter) sendAlert(serverName, alertType, message string) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("ERROR: gotify returned %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		log.Printf("ERROR: gotify returned %d, body: %s", resp.StatusCode, string(respBody))
 	}
 }

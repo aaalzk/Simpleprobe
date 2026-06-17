@@ -3,96 +3,206 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>简易探针 Simpleprobe - 服务器监控</title>
-<link rel="stylesheet" href="/style.css">
+<title>简易探针 Simpleprobe</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2a2d3a;
+  --text: #c9d1d9;
+  --text-dim: #6e7681;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --blue: #58a6ff;
+  --purple: #a371f7;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.container{max-width:1400px;margin:0 auto;padding:16px 24px}
+header{display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--border);margin-bottom:20px}
+header h1{font-size:1.5rem;font-weight:600}
+#clock{color:var(--text-dim);font-size:.9rem}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;text-align:center}
+.card-value{font-size:2rem;font-weight:700}
+.card-label{color:var(--text-dim);font-size:.85rem;margin-top:4px}
+.card.online .card-value{color:var(--green)}
+.card.offline .card-value{color:var(--red)}
+.card.total .card-value{color:var(--blue)}
+.card.alerts .card-value{color:var(--yellow)}
+.table-wrapper{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th{text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:500;background:#1e2130;white-space:nowrap;position:sticky;top:0}
+td{padding:10px 12px;border-top:1px solid var(--border);white-space:nowrap}
+tr.server-row{cursor:pointer}
+tr.server-row:hover{background:#22263a}
+tr.server-row.selected{background:#1e2a4a}
+tr.empty-row td{text-align:center;color:var(--text-dim);padding:32px}
+.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%}
+.status-dot.online{background:var(--green);box-shadow:0 0 6px var(--green)}
+.status-dot.offline{background:var(--red)}
+.bar-wrap{width:80px;height:6px;background:#2a2d3a;border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.bar-fill.low{background:var(--green)}
+.bar-fill.mid{background:var(--yellow)}
+.bar-fill.high{background:var(--red)}
+.bar-value{font-size:.8rem;margin-left:6px;color:var(--text-dim)}
+.net-rate{font-size:.8rem}
+.net-rate .rx{color:var(--blue)}
+.net-rate .tx{color:var(--purple)}
+.chart-panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px}
+.chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px}
+.chart-controls{display:flex;gap:8px;align-items:center}
+.chart-controls select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:.85rem}
+.btn-close{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.85rem}
+.btn-close:hover{color:var(--text);border-color:var(--text-dim)}
+.alerts-panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:20px}
+.alerts-panel h3{font-size:1rem;margin-bottom:12px}
+.alert-list{max-height:200px;overflow-y:auto}
+.alert-item{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:.85rem}
+.alert-item:last-child{border-bottom:none}
+.alert-type{font-weight:600;padding:1px 6px;border-radius:3px;font-size:.75rem;white-space:nowrap}
+.alert-type.offline{background:#3d1e1e;color:var(--red)}
+.alert-type.online{background:#1e2a1e;color:var(--green)}
+.alert-type.cpu{background:#1e1e3d;color:var(--blue)}
+.alert-type.traffic_rx,.alert-type.traffic_tx{background:#3d2e1e;color:var(--yellow)}
+.alert-time{color:var(--text-dim);white-space:nowrap}
+footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
+@media(max-width:768px){.summary{grid-template-columns:repeat(2,1fr)}.container{padding:8px 12px}table{font-size:.8rem}th,td{padding:6px 8px}}
+</style>
 </head>
 <body>
 <div class="container">
-  <header>
-    <h1>🖥️ 简易探针</h1>
-    <span id="clock">--</span>
-  </header>
-
-  <!-- Summary Cards -->
-  <div class="summary">
-    <div class="card online">
-      <div class="card-value" id="count-online">0</div>
-      <div class="card-label">在线</div>
-    </div>
-    <div class="card offline">
-      <div class="card-value" id="count-offline">0</div>
-      <div class="card-label">离线</div>
-    </div>
-    <div class="card total">
-      <div class="card-value" id="count-total">0</div>
-      <div class="card-label">总计</div>
-    </div>
-    <div class="card alerts">
-      <div class="card-value" id="count-alerts">0</div>
-      <div class="card-label">告警 (24h)</div>
-    </div>
-  </div>
-
-  <!-- Server Table -->
-  <div class="table-wrapper">
-    <table id="server-table">
-      <thead>
-        <tr>
-          <th>状态</th>
-          <th>名称</th>
-          <th>CPU</th>
-          <th>内存</th>
-          <th>磁盘</th>
-          <th>网络 ↓</th>
-          <th>网络 ↑</th>
-          <th>负载</th>
-          <th>在线时长</th>
-          <th>最后上报</th>
-        </tr>
-      </thead>
-      <tbody id="server-tbody">
-        <tr class="empty-row"><td colspan="10">等待数据...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Chart Panel -->
-  <div class="chart-panel" id="chart-panel" style="display:none">
-    <div class="chart-header">
-      <h3 id="chart-title">历史趋势</h3>
-      <div class="chart-controls">
-        <select id="chart-metric">
-          <option value="cpu_percent">CPU</option>
-          <option value="mem_percent">内存</option>
-          <option value="disk_percent">磁盘</option>
-          <option value="net_rx_rate">网络入站</option>
-          <option value="net_tx_rate">网络出站</option>
-          <option value="load_1">负载 1min</option>
-        </select>
-        <select id="chart-hours">
-          <option value="1">1小时</option>
-          <option value="6">6小时</option>
-          <option value="24" selected>24小时</option>
-          <option value="72">72小时</option>
-        </select>
-        <button id="chart-close" class="btn-close">✕ 关闭</button>
-      </div>
-    </div>
-    <canvas id="history-chart" height="80"></canvas>
-  </div>
-
-  <!-- Alert History -->
-  <div class="alerts-panel">
-    <h3>📢 最近告警</h3>
-    <div id="alert-list" class="alert-list">--</div>
-  </div>
-
-  <footer>
-    Simpleprobe v1.0.0 · 刷新间隔 10s
-  </footer>
+<header><h1>🖥️ 简易探针</h1><span id="clock">--</span></header>
+<div class="summary">
+<div class="card online"><div class="card-value" id="count-online">0</div><div class="card-label">在线</div></div>
+<div class="card offline"><div class="card-value" id="count-offline">0</div><div class="card-label">离线</div></div>
+<div class="card total"><div class="card-value" id="count-total">0</div><div class="card-label">总计</div></div>
+<div class="card alerts"><div class="card-value" id="count-alerts">0</div><div class="card-label">告警 (24h)</div></div>
 </div>
-
-<script src="/app.js"></script>
+<div class="table-wrapper">
+<table id="server-table">
+<thead><tr><th>状态</th><th>名称</th><th>CPU</th><th>内存</th><th>磁盘</th><th>网络 ↓</th><th>网络 ↑</th><th>负载</th><th>在线时长</th><th>最后上报</th></tr></thead>
+<tbody id="server-tbody"><tr class="empty-row"><td colspan="10">等待数据...</td></tr></tbody>
+</table>
+</div>
+<div class="chart-panel" id="chart-panel" style="display:none">
+<div class="chart-header">
+<h3 id="chart-title">历史趋势</h3>
+<div class="chart-controls">
+<select id="chart-metric"><option value="cpu_percent">CPU</option><option value="mem_percent">内存</option><option value="disk_percent">磁盘</option><option value="net_rx_rate">网络入站</option><option value="net_tx_rate">网络出站</option><option value="load_1">负载 1min</option></select>
+<select id="chart-hours"><option value="1">1小时</option><option value="6">6小时</option><option value="24" selected>24小时</option><option value="72">72小时</option></select>
+<button id="chart-close" class="btn-close">✕ 关闭</button>
+</div>
+</div>
+<canvas id="history-chart" height="80"></canvas>
+</div>
+<div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
+<footer>Simpleprobe v1.0.0 · 刷新间隔 10s</footer>
+</div>
+<script>
+(function(){
+'use strict';
+var REFRESH=10000,chartInst=null,selSrv=null;
+document.addEventListener('DOMContentLoaded',function(){
+updateClock();setInterval(updateClock,1000);
+fetchServers();setInterval(fetchServers,REFRESH);
+fetchAlerts();setInterval(fetchAlerts,30000);
+document.getElementById('chart-close').addEventListener('click',closeChart);
+document.getElementById('chart-metric').addEventListener('change',refreshChart);
+document.getElementById('chart-hours').addEventListener('change',refreshChart);
+});
+function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}
+async function fetchServers(){
+try{var r=await fetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);renderServers(await r.json())}catch(e){console.error(e)}
+}
+function renderServers(s){
+var tb=document.getElementById('server-tbody');
+document.getElementById('count-online').textContent=s.filter(function(x){return x.status==='online'}).length;
+document.getElementById('count-offline').textContent=s.filter(function(x){return x.status!=='online'}).length;
+document.getElementById('count-total').textContent=s.length;
+if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">暂无服务器数据</td></tr>';return}
+tb.innerHTML=s.map(function(x){
+var sc=x.status==='online'?'online':'offline';
+var bc=function(v){return v>90?'high':v>70?'mid':'low'};
+return '<tr class="server-row'+(selSrv===x.name?' selected':'')+'" data-name="'+esc(x.name)+'">'+
+'<td><span class="status-dot '+sc+'" title="'+x.status+'"></span></td>'+
+'<td><strong>'+esc(x.name)+'</strong><br><small>'+esc(x.os_name||'')+'</small></td>'+
+'<td><div class="bar-wrap"><div class="bar-fill '+bc(x.cpu_percent)+'" style="width:'+Math.min(x.cpu_percent,100)+'%"></div></div><span class="bar-value">'+x.cpu_percent.toFixed(1)+'%</span></td>'+
+'<td><div class="bar-wrap"><div class="bar-fill '+bc(x.mem_percent)+'" style="width:'+Math.min(x.mem_percent,100)+'%"></div></div><span class="bar-value">'+x.mem_percent.toFixed(1)+'%</span></td>'+
+'<td><div class="bar-wrap"><div class="bar-fill '+bc(x.disk_percent)+'" style="width:'+Math.min(x.disk_percent,100)+'%"></div></div><span class="bar-value">'+x.disk_percent.toFixed(1)+'%</span></td>'+
+'<td class="net-rate"><span class="rx">↓ '+fmtRate(x.net_rx_rate)+'</span></td>'+
+'<td class="net-rate"><span class="tx">↑ '+fmtRate(x.net_tx_rate)+'</span></td>'+
+'<td>'+x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1)+'</td>'+
+'<td>'+fmtUptime(x.uptime)+'</td><td>'+fmtAgo(x.last_seen)+'</td></tr>';
+}).join('');
+tb.querySelectorAll('.server-row').forEach(function(r){
+r.addEventListener('click',function(){
+var n=r.dataset.name;
+if(selSrv===n)closeChart();else selectServer(n);
+});
+});
+}
+function selectServer(n){
+selSrv=n;document.getElementById('chart-title').textContent='历史趋势 - '+n;
+document.getElementById('chart-panel').style.display='block';
+document.querySelectorAll('.server-row').forEach(function(r){r.classList.toggle('selected',r.dataset.name===n)});
+refreshChart();
+}
+function closeChart(){
+selSrv=null;document.getElementById('chart-panel').style.display='none';
+if(chartInst){chartInst.destroy();chartInst=null}
+document.querySelectorAll('.server-row').forEach(function(r){r.classList.remove('selected')});
+}
+async function refreshChart(){
+if(!selSrv)return;
+var m=document.getElementById('chart-metric').value;
+var h=document.getElementById('chart-hours').value;
+try{
+var r=await fetch('/api/history/'+encodeURIComponent(selSrv)+'?hours='+h);
+if(!r.ok)throw Error('HTTP '+r.status);
+var d=await r.json();
+var labels=d.map(function(x){return new Date(x.timestamp).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
+var values=d.map(function(x){return x[m]||0});
+var ml={cpu_percent:'CPU %',mem_percent:'内存 %',disk_percent:'磁盘 %',net_rx_rate:'入站速率 (bytes/s)',net_tx_rate:'出站速率 (bytes/s)',load_1:'Load 1min'};
+var ctx=document.getElementById('history-chart').getContext('2d');
+if(chartInst)chartInst.destroy();
+chartInst=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:ml[m]||m,data:values,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:20,maxRotation:0},grid:{color:'#1e2130'}},y:{ticks:{color:'#6e7681'},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false}}}});
+}catch(e){console.error(e)}
+}
+async function fetchAlerts(){
+try{var r=await fetch('/api/alerts');if(!r.ok)throw Error('HTTP '+r.status);renderAlerts(await r.json())}catch(e){console.error(e)}
+}
+function renderAlerts(a){
+var c=document.getElementById('alert-list');
+var dayAgo=Date.now()-86400000;
+document.getElementById('count-alerts').textContent=a.filter(function(x){return new Date(x.sent_at+'Z').getTime()>dayAgo}).length;
+if(!a.length){c.innerHTML='<div class="alert-item" style="color:var(--text-dim)">暂无告警</div>';return}
+c.innerHTML=a.slice(0,20).map(function(x){
+var tc=x.type==='traffic_rx'||x.type==='traffic_tx'?'traffic_rx':x.type;
+return '<div class="alert-item"><span class="alert-type '+tc+'">'+x.type+'</span><span>'+esc(x.message)+'</span><span class="alert-time">'+fmtAgo(x.sent_at)+'</span></div>';
+}).join('');
+}
+function fmtRate(b){
+if(!b||b<0)return '0 B/s';
+var u=['B/s','KB/s','MB/s','GB/s'],v=b,i=0;
+while(v>=1000&&i<u.length-1){v/=1000;i++}
+return v.toFixed(1)+' '+u[i];
+}
+function fmtUptime(s){
+if(!s||s<0)return '--';
+var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);
+if(d>0)return d+'d '+h+'h';if(h>0)return h+'h '+m+'m';return m+'m';
+}
+function fmtAgo(t){
+if(!t)return '--';
+var s=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);
+if(s<5)return '刚刚';if(s<60)return s+'秒前';if(s<3600)return Math.floor(s/60)+'分钟前';if(s<86400)return Math.floor(s/3600)+'小时前';return Math.floor(s/86400)+'天前';
+}
+function esc(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+})();
+</script>
 </body>
 </html>

@@ -127,6 +127,15 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 (function(){
 'use strict';
 var REFRESH=10000,chartInst=null,selSrv=null;
+window.API_TOKEN="";
+function apiFetch(url, opts) {
+	opts = opts || {};
+	opts.headers = opts.headers || {};
+	if (window.API_TOKEN) {
+		opts.headers['Authorization'] = 'Bearer ' + window.API_TOKEN;
+	}
+	return fetch(url, opts);
+}
 document.addEventListener('DOMContentLoaded',function(){
 updateClock();setInterval(updateClock,1000);
 fetchServers();setInterval(fetchServers,REFRESH);
@@ -137,7 +146,7 @@ document.getElementById('chart-hours').addEventListener('change',refreshChart);
 });
 function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}
 async function fetchServers(){
-try{var r=await fetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);renderServers(await r.json())}catch(e){console.error(e)}
+try{var r=await apiFetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);renderServers(await r.json())}catch(e){console.error(e)}
 }
 function renderServers(s){
 var tb=document.getElementById('server-tbody');
@@ -201,7 +210,7 @@ if(!selSrv)return;
 var m=document.getElementById('chart-metric').value;
 var h=document.getElementById('chart-hours').value;
 try{
-var r=await fetch('/api/history/'+encodeURIComponent(selSrv)+'?hours='+h);
+var r=await apiFetch('/api/history/'+encodeURIComponent(selSrv)+'?hours='+h);
 if(!r.ok)throw Error('HTTP '+r.status);
 var d=await r.json();
 var labels=d.map(function(x){return new Date(x.timestamp).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
@@ -213,7 +222,7 @@ chartInst=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:ml[m]|
 }catch(e){console.error(e)}
 }
 async function fetchAlerts(){
-try{var r=await fetch('/api/alerts');if(!r.ok)throw Error('HTTP '+r.status);renderAlerts(await r.json())}catch(e){console.error(e)}
+try{var r=await apiFetch('/api/alerts');if(!r.ok)throw Error('HTTP '+r.status);renderAlerts(await r.json())}catch(e){console.error(e)}
 }
 function renderAlerts(a){
 var c=document.getElementById('alert-list');

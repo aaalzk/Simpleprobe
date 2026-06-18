@@ -30,8 +30,12 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Token validation
 	if cfg.Token == "change-me" {
-		log.Println("WARNING: using default token 'change-me' — please set a secure token in agent.yml")
+		log.Fatalf("FATAL: default token 'change-me' is not allowed — please set a secure token in agent.yml")
+	}
+	if len(cfg.Token) < 16 {
+		log.Fatalf("FATAL: token is too short (%d chars) — must be at least 16 characters", len(cfg.Token))
 	}
 
 	log.Printf("simpleprobe-agent %s starting", version)

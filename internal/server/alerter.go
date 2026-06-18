@@ -99,6 +99,50 @@ func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64)
 	}
 }
 
+// SendSecurityAlert sends a system-level security alert (e.g. brute force attempts).
+func (a *Alerter) SendSecurityAlert(alertType, message string) {
+	log.Printf("SECURITY ALERT [%s]: %s", alertType, message)
+
+	// Record in database under a special system name
+	if err := a.store.InsertAlert("__system__", alertType, message); err != nil {
+		log.Printf("ERROR: insert security alert: %v", err)
+	}
+
+	// Send to Gotify if configured
+	if a.gotify.URL == "" || a.gotify.Token == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"title":    fmt.Sprintf("[SECURITY] %s", alertType),
+		"message":  message,
+		"priority": 8, // higher priority for security alerts
+		"extras":   map[string]interface{}{},
+	}
+	body, _ := json.Marshal(payload)
+
+	url := strings.TrimRight(a.gotify.URL, "/") + "/message"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("ERROR: gotify security alert request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gotify-Key", a.gotify.Token)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		log.Printf("ERROR: gotify security alert push: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		log.Printf("ERROR: gotify security alert returned %d, body: %s", resp.StatusCode, string(respBody))
+	}
+}
+
 // sendAlert sends an alert via Gotify and records it in the database.
 func (a *Alerter) sendAlert(serverName, alertType, message string) {
 	log.Printf("ALERT [%s] %s: %s", alertType, serverName, message)

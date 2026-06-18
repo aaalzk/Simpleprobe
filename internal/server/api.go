@@ -1,8 +1,10 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 
@@ -11,25 +13,40 @@ import (
 
 // APIHandler holds dependencies for the HTTP API.
 type APIHandler struct {
-	store    *Store
-	alerter  *Alerter
-	token    string
+	store       *Store
+	alerter     *Alerter
+	token       string
+	rateLimiter *RateLimiter
 }
 
 // NewAPIHandler creates a new API handler.
-func NewAPIHandler(store *Store, alerter *Alerter, token string) *APIHandler {
-	return &APIHandler{store: store, alerter: alerter, token: token}
+func NewAPIHandler(store *Store, alerter *Alerter, token string, rl *RateLimiter) *APIHandler {
+	return &APIHandler{store: store, alerter: alerter, token: token, rateLimiter: rl}
 }
 
-// RegisterRoutes sets up HTTP routes on the given mux.
+// RegisterRoutes sets up HTTP routes on the given mux. All API routes
+// require Bearer token authentication.
 func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/report", h.handleReport)
-	mux.HandleFunc("/api/servers", h.handleServers)
-	mux.HandleFunc("/api/history/", h.handleHistory)
-	mux.HandleFunc("/api/alerts", h.handleAlerts)
+	mux.HandleFunc("/api/report", h.authMiddleware(h.handleReport))
+	mux.HandleFunc("/api/servers", h.authMiddleware(h.handleServers))
+	mux.HandleFunc("/api/history/", h.authMiddleware(h.handleHistory))
+	mux.HandleFunc("/api/alerts", h.authMiddleware(h.handleAlerts))
 }
 
-// auth validates the Bearer token from the request.
+// extractIP extracts the client IP from the request, respecting X-Forwarded-For.
+func extractIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ip := strings.SplitN(xff, ",", 2)[0]
+		return strings.TrimSpace(ip)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// auth validates the Bearer token using constant-time comparison.
 func (h *APIHandler) auth(r *http.Request) bool {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -39,18 +56,45 @@ func (h *APIHandler) auth(r *http.Request) bool {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return false
 	}
-	return parts[1] == h.token
+	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(h.token)) == 1
+}
+
+// authMiddleware wraps a handler with authentication, rate limiting, and
+// brute-force detection logging.
+func (h *APIHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := extractIP(r)
+
+		// Check if this IP is currently blocked
+		if !h.rateLimiter.Allow(ip) {
+			log.Printf("AUTH BLOCKED: ip=%s — still in cooldown", ip)
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+
+		if !h.auth(r) {
+			// Record the failure; check if threshold was just crossed
+			justBlocked := h.rateLimiter.RecordFailure(ip)
+			log.Printf("AUTH FAILED: ip=%s user-agent=%s", ip, r.UserAgent())
+
+			if justBlocked {
+				log.Printf("AUTH BRUTE-FORCE: ip=%s exceeded failure threshold", ip)
+				h.alerter.SendSecurityAlert("brute_force",
+					"检测到暴力破解尝试 — IP: "+ip+" 短时间内多次认证失败，已被临时封禁")
+			}
+
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
 }
 
 // handleReport accepts metrics reports from agents.
 func (h *APIHandler) handleReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if !h.auth(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 

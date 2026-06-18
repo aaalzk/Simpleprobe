@@ -1,5 +1,5 @@
 # Agent configuration for Simpleprobe (简易探针)
 server_url: "https://probe.example.com"  # Server URL (behind Cloudflare)
 name: "my-server"                        # Unique server name
-token: "change-me"                       # Shared secret
+token: "change-me"                       # Shared secret — MUST CHANGE! Use: openssl rand -hex 32
 interval: 30                             # Report interval in seconds

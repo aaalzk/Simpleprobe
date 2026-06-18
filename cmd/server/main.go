@@ -32,8 +32,12 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Token validation
 	if cfg.Token == "change-me" {
-		log.Println("WARNING: using default token 'change-me' — please set a secure token in server.yml")
+		log.Fatalf("FATAL: default token 'change-me' is not allowed — please set a secure token in server.yml")
+	}
+	if len(cfg.Token) < 16 {
+		log.Fatalf("FATAL: token is too short (%d chars) — must be at least 16 characters", len(cfg.Token))
 	}
 
 	// Open database
@@ -54,19 +58,35 @@ func main() {
 		}
 	}()
 
+	// Start rate limiter cleanup
+	rateLimiter := server.NewRateLimiter(10, 60*time.Second, 300*time.Second)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			rateLimiter.Cleanup()
+		}
+	}()
+
 	// Start alerter
 	alerter := server.NewAlerter(store, cfg.Alerts, cfg.Gotify)
 	alerter.Start()
+
+	// Set up rate limiter alert callback
+	rateLimiter.OnAlert(func(ip string, count int) {
+		alerter.SendSecurityAlert("brute_force",
+			fmt.Sprintf("检测到暴力破解尝试 — IP: %s 短时间内 %d 次认证失败，已被临时封禁", ip, count))
+	})
 
 	// Set up HTTP routes
 	mux := http.NewServeMux()
 
 	// API routes
-	apiHandler := server.NewAPIHandler(store, alerter, cfg.Token)
+	apiHandler := server.NewAPIHandler(store, alerter, cfg.Token, rateLimiter)
 	apiHandler.RegisterRoutes(mux)
 
 	// Static files (dashboard)
-	mux.Handle("/", web.Handler())
+	mux.Handle("/", web.Handler(cfg.Token))
 
 	// Start HTTP server
 	log.Printf("simpleprobe-server %s starting", version)

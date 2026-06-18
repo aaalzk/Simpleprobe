@@ -284,9 +284,44 @@ make build-server
 
 ## 安全性
 
-- Agent 与 Server 之间通过 Bearer Token 认证
+### ⚠️ 重要：必须修改默认 Token
+
+**默认 token 为 `change-me`，程序会拒绝启动！** 部署前必须生成一个高强度随机 token。
+
+生成随机 token 的方法：
+
+```bash
+# Linux/macOS
+openssl rand -hex 32
+# 或
+cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
+```
+
+将生成的 token 填入 `server.yml` 和 `agent.yml`，两端必须一致。
+
+### 安全特性
+
+- **全端点鉴权**：所有 API 端点（`/api/report`、`/api/servers`、`/api/history`、`/api/alerts`）均需要 Bearer Token 认证
+- **恒定时间比较**：Token 比较使用 `crypto/subtle.ConstantTimeCompare`，防止时序攻击
+- **速率限制**：同一 IP 在 60 秒内认证失败超过 10 次将被临时封禁 5 分钟
+- **暴力破解告警**：检测到暴力破解尝试时，会通过 Gotify 推送安全告警通知
+- **认证失败日志**：每次认证失败都会记录 IP 和 User-Agent，便于审计
+- **Token 强度校验**：启动时强制要求 token 长度 >= 16 字符，拒绝使用默认 token
+
+### 端口扫描防护
+
 - 建议在 Cloudflare 上配置 WAF 规则限制 `/api/report` 的访问频率
 - 建议为 Dashboard 添加 Cloudflare Access 或 nginx basic auth
+
+```nginx
+# nginx 层速率限制
+limit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;
+
+location /api/ {
+    limit_req zone=api burst=3 nodelay;
+    proxy_pass http://127.0.0.1:8080;
+}
+```
 
 ## License
 

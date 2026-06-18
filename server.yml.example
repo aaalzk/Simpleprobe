@@ -1,7 +1,7 @@
 # Server configuration for Simpleprobe (简易探针)
 listen: ":8080"                  # Listen address
 db_path: "./probe.db"            # SQLite database path
-token: "change-me"               # Shared secret between agent and server
+token: "change-me"               # Shared secret — MUST CHANGE! Use: openssl rand -hex 32
 
 # Gotify notification settings
 gotify:

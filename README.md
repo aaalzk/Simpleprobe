@@ -92,22 +92,26 @@ interval: 30
 
 ### 升级
 
-解压后的压缩包自带升级脚本，使用 systemd 管理时可直接运行：
+使用 systemd 管理时，下载升级脚本后直接运行：
 
 ```bash
 # 升级 Server 到最新版
-sudo ./upgrade-server.sh
+wget -O upgrade-server.sh https://raw.githubusercontent.com/aaalzk/Simpleprobe/main/scripts/upgrade-server.sh
+sudo sh upgrade-server.sh
 
 # 升级 Agent 到最新版
-sudo ./upgrade-agent.sh
+wget -O upgrade-agent.sh https://raw.githubusercontent.com/aaalzk/Simpleprobe/main/scripts/upgrade-agent.sh
+sudo sh upgrade-agent.sh
 
 # 升级到指定版本
-sudo ./upgrade-agent.sh v1.0.6
+sudo sh upgrade-agent.sh v1.1.0
 ```
 
 ## 反向代理
 
-Server 默认监听 `:8080`，可以通过 Nginx 或 Caddy 反向代理来提供 HTTPS、访问控制和静态资源缓存。
+Server 默认监听 `:8080`，可以通过 Nginx 或 Caddy 反向代理来提供 HTTPS 和静态资源缓存。
+
+> **注意**：Server 已内置 Bearer Token 鉴权、速率限制和暴力破解检测，反向代理层无需重复这些安全措施。Nginx/Caddy 只需负责 TLS 终结和反向代理即可。
 
 ### 前置准备：让 Server 仅监听本地
 
@@ -126,11 +130,10 @@ server {
     listen 80;
     server_name probe.your-domain.com;
 
-    # 可选：basic auth 保护 Dashboard
+    # 可选：basic auth 作为额外保护层
     # auth_basic "Simpleprobe";
     # auth_basic_user_file /etc/nginx/.htpasswd;
 
-    # Dashboard 和 API
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -142,7 +145,7 @@ server {
         proxy_read_timeout 30s;
     }
 
-    # Agent 上报接口需要更大的 body 和超时
+    # Agent 上报接口：更大的 body 和超时
     location /api/report {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -155,13 +158,25 @@ server {
 }
 ```
 
-启用站点并获取证书（假设用 certbot）：
+启用站点并获取证书：
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/probe /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d probe.your-domain.com
 ```
+
+> **关于速率限制**：Server 已内置认证失败速率限制（同 IP 60s 内失败 10 次封禁 5 分钟）和暴力破解告警。如需在 Nginx 层额外限制请求频率（例如防止 CC 攻击），可添加：
+>
+> ```nginx
+> # 全局请求速率限制（可选，Server 已有内置限制）
+> limit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;
+>
+> location /api/ {
+>     limit_req zone=api burst=3 nodelay;
+>     proxy_pass http://127.0.0.1:8080;
+> }
+> ```
 
 ### Caddy 反向代理
 
@@ -174,7 +189,7 @@ probe.your-domain.com {
 }
 ```
 
-带 basic auth 保护 Dashboard：
+带 basic auth 保护 Dashboard（可选，Server 已有 Token 鉴权）：
 
 ```caddy
 probe.your-domain.com {
@@ -310,18 +325,10 @@ cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
 
 ### 端口扫描防护
 
+Server 已内置速率限制和暴力破解检测，无需额外配置。如需在反向代理层增加防护：
+
 - 建议在 Cloudflare 上配置 WAF 规则限制 `/api/report` 的访问频率
-- 建议为 Dashboard 添加 Cloudflare Access 或 nginx basic auth
-
-```nginx
-# nginx 层速率限制
-limit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;
-
-location /api/ {
-    limit_req zone=api burst=3 nodelay;
-    proxy_pass http://127.0.0.1:8080;
-}
-```
+- 建议为 Dashboard 添加 Cloudflare Access 或 nginx basic auth（作为第二层保护）
 
 ## License
 

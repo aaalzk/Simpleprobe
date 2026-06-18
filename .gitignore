@@ -19,6 +19,11 @@ agent.yml
 *.swp
 *.swo
 
+# Claude Code
+CLAUDE.md
+PROJECT_MEMORY.md
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

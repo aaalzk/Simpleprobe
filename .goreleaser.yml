@@ -40,7 +40,6 @@ archives:
     format: tar.gz
     files:
       - agent.yml.example
-      - scripts/upgrade-agent.sh
 
   - id: server
     builds: [server]
@@ -48,7 +47,6 @@ archives:
     format: tar.gz
     files:
       - server.yml.example
-      - scripts/upgrade-server.sh
 
 checksum:
   name_template: 'checksums.txt'

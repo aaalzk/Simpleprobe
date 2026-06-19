@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,6 +31,7 @@ type Metrics struct {
 	Uptime        uint64             `json:"uptime"`       // seconds
 	TCPConns      uint64             `json:"tcp_conns"`
 	ProcessCount  uint64             `json:"process_count"`
+	TopCPUProcs   []ProcInfo         `json:"top_cpu_procs"`
 	NICs          map[string]NICStat `json:"nics"`
 	OSName        string             `json:"os_name"`
 	KernelVersion string             `json:"kernel_version"`
@@ -39,6 +41,13 @@ type Metrics struct {
 type NICStat struct {
 	RxBytes uint64 `json:"rx_bytes"`
 	TxBytes uint64 `json:"tx_bytes"`
+}
+
+// ProcInfo holds information about a single process for top-N reporting.
+type ProcInfo struct {
+	Name       string  `json:"name"`
+	PID        int     `json:"pid"`
+	CPUPercent float64 `json:"cpu_percent"`
 }
 
 // Report is the payload sent to the server.
@@ -54,6 +63,8 @@ type Collector struct {
 	prevNet      map[string]nicSample
 	prevNetTime  time.Time
 	prevNetBytes uint64 // total across all nics
+	prevProcs    map[int]procCPUSample
+	prevProcTime time.Time
 	osName       string
 	kernelVer    string
 }
@@ -74,6 +85,11 @@ type nicSample struct {
 	tx uint64
 }
 
+type procCPUSample struct {
+	utime uint64
+	stime uint64
+}
+
 // NewCollector creates a new Collector and performs one-time lookups.
 func NewCollector() *Collector {
 	c := &Collector{}
@@ -83,6 +99,8 @@ func NewCollector() *Collector {
 	c.prevCPU = c.readCPUSample()
 	c.prevNet, _, _ = c.readNICSample()
 	c.prevNetTime = time.Now()
+	c.prevProcs = c.readProcSamples()
+	c.prevProcTime = time.Now()
 	return c
 }
 
@@ -117,6 +135,9 @@ func (c *Collector) Collect(name string) Report {
 	tcpConns := c.tcpConnCount()
 	procCount := c.processCount()
 
+	// Top CPU processes
+	topCPU := c.collectTopCPU(3)
+
 	// Build NIC map
 	nics := make(map[string]NICStat)
 	for iface, s := range curNet {
@@ -144,6 +165,7 @@ func (c *Collector) Collect(name string) Report {
 			Uptime:        upt,
 			TCPConns:      tcpConns,
 			ProcessCount:  procCount,
+			TopCPUProcs:   topCPU,
 			NICs:          nics,
 			OSName:        c.osName,
 			KernelVersion: c.kernelVer,
@@ -371,6 +393,134 @@ func (c *Collector) processCount() uint64 {
 		}
 	}
 	return count
+}
+
+// readProcSamples reads CPU time for all processes from /proc/[pid]/stat.
+// Returns a map of PID -> procCPUSample for delta calculation.
+func (c *Collector) readProcSamples() map[int]procCPUSample {
+	procs := make(map[int]procCPUSample)
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return procs
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		utime, stime := c.readProcCPU(pid)
+		procs[pid] = procCPUSample{utime: utime, stime: stime}
+	}
+	return procs
+}
+
+// readProcCPU reads utime and stime from /proc/[pid]/stat.
+func (c *Collector) readProcCPU(pid int) (uint64, uint64) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, 0
+	}
+	// Format: pid (comm) state ppid pgrp session tty_nr tpgid flags minflt cminflt
+	// majflt cmajflt utime stime ...
+	// The comm field may contain spaces and parentheses, so find the last ')'
+	content := string(data)
+	lastParen := strings.LastIndex(content, ")")
+	if lastParen < 0 {
+		return 0, 0
+	}
+	fields := strings.Fields(content[lastParen+1:])
+	// After the last ')', the fields are:
+	// [0]=state [1]=ppid ... [11]=utime [12]=stime
+	if len(fields) < 13 {
+		return 0, 0
+	}
+	return parseUint(fields[11]), parseUint(fields[12])
+}
+
+// readProcName reads the process name from /proc/[pid]/cmdline, falling back
+// to the comm field from /proc/[pid]/stat.
+func (c *Collector) readProcName(pid int) string {
+	// Try cmdline first for the full command name
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err == nil && len(data) > 0 {
+		// cmdline uses null bytes as separators
+		name := strings.ReplaceAll(string(data), "\x00", " ")
+		name = strings.TrimSpace(name)
+		if name != "" {
+			return name
+		}
+	}
+	// Fallback to comm from stat
+	statData, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return fmt.Sprintf("PID %d", pid)
+	}
+	content := string(statData)
+	start := strings.Index(content, "(")
+	end := strings.LastIndex(content, ")")
+	if start >= 0 && end > start {
+		return content[start+1 : end]
+	}
+	return fmt.Sprintf("PID %d", pid)
+}
+
+// collectTopCPU returns the top N processes by CPU usage.
+func (c *Collector) collectTopCPU(topN int) []ProcInfo {
+	now := time.Now()
+	curProcs := c.readProcSamples()
+
+	elapsed := now.Sub(c.prevProcTime).Seconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+
+	type procDelta struct {
+		pid  int
+		name string
+		pct  float64
+	}
+	var deltas []procDelta
+
+	for pid, cur := range curProcs {
+		prev, ok := c.prevProcs[pid]
+		if !ok {
+			continue // new process, skip first sample
+		}
+		cpuDelta := (cur.utime + cur.stime) - (prev.utime + prev.stime)
+		// CLK_TCK = 100 on Linux: CPU% = delta / (elapsed * clk_tck) * 100
+		pct := float64(cpuDelta) / (elapsed * 100) * 100
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 0 {
+			deltas = append(deltas, procDelta{pid: pid, pct: pct})
+		}
+	}
+
+	sort.Slice(deltas, func(i, j int) bool {
+		return deltas[i].pct > deltas[j].pct
+	})
+
+	if len(deltas) > topN {
+		deltas = deltas[:topN]
+	}
+
+	// Resolve names only for the top N
+	result := make([]ProcInfo, len(deltas))
+	for i, d := range deltas {
+		result[i] = ProcInfo{
+			Name:       c.readProcName(d.pid),
+			PID:        d.pid,
+			CPUPercent: d.pct,
+		}
+	}
+
+	c.prevProcs = curProcs
+	c.prevProcTime = now
+	return result
 }
 
 func (c *Collector) readOSName() string {

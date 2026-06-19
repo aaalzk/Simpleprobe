@@ -147,7 +147,7 @@ func (h *APIHandler) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check alerts immediately
-	h.alerter.CheckServer(report.Name, m.CPUPercent, m.NetRxRate, m.NetTxRate)
+	h.alerter.CheckServer(report.Name, m.CPUPercent, m.NetRxRate, m.NetTxRate, m.TopCPUProcs)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

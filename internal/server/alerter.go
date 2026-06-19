@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aaalzk/Simpleprobe/internal/agent"
 	"github.com/aaalzk/Simpleprobe/internal/config"
 )
 
@@ -71,11 +72,17 @@ func (a *Alerter) SendRecoveryAlert(name string) {
 
 // CheckServer checks a single server's metrics for alert conditions.
 // Called after each report is received.
-func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64) {
+func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64, topCPUProcs []agent.ProcInfo) {
 	// Check CPU threshold
 	if cpuPct > a.cfg.CPUThreshold {
 		if !a.store.CheckAlertCooldown(name, "cpu", a.cfg.CooldownSeconds) {
 			msg := fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%)", name, cpuPct, a.cfg.CPUThreshold)
+			if len(topCPUProcs) > 0 {
+				msg += "\nCPU 占用 Top 进程:"
+				for i, p := range topCPUProcs {
+					msg += fmt.Sprintf("\n  %d. %s (PID %d) — %.1f%%", i+1, p.Name, p.PID, p.CPUPercent)
+				}
+			}
 			a.sendAlert(name, "cpu", msg)
 		}
 	}

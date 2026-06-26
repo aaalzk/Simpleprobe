@@ -76,8 +76,15 @@ func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64,
 	// Check CPU threshold
 	if cpuPct > a.cfg.CPUThreshold {
 		if !a.store.CheckAlertCooldown(name, "cpu", a.cfg.CooldownSeconds) {
-			msg := fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%)", name, cpuPct, a.cfg.CPUThreshold)
-			a.sendAlert(name, "cpu", msg)
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%)", name, cpuPct, a.cfg.CPUThreshold))
+			if len(topCPUProcs) > 0 {
+				sb.WriteString("\n\n")
+				for i, p := range topCPUProcs {
+					sb.WriteString(fmt.Sprintf("  %d. %s (PID: %d) %.1f%%\n", i+1, p.Name, p.PID, p.CPUPercent))
+				}
+			}
+			a.sendAlert(name, "cpu", sb.String())
 		}
 	}
 

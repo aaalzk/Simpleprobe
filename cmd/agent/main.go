@@ -75,7 +75,7 @@ func main() {
 
 func reportAndLog(c *agent.Collector, p *agent.Pusher, name string) {
 	report := c.Collect(name)
-	if err := p.Push(report); err != nil {
+	if _, err := p.Push(report); err != nil {
 		log.Printf("ERROR: report failed: %v", err)
 		return
 	}

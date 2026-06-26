@@ -13,6 +13,7 @@ type ServerConfig struct {
 	Token               string        `yaml:"token"`
 	Gotify              GotifyConfig  `yaml:"gotify"`
 	Alerts              AlertConfig   `yaml:"alerts"`
+	Gaze                GazeConfig    `yaml:"gaze"`
 	HistoryRetentionHrs int           `yaml:"history_retention_hours"`
 }
 
@@ -29,6 +30,14 @@ type AlertConfig struct {
 	TrafficRxMbps   float64 `yaml:"traffic_rx_mbps"`
 	TrafficTxMbps   float64 `yaml:"traffic_tx_mbps"`
 	CooldownSeconds int     `yaml:"cooldown_seconds"`
+}
+
+// GazeConfig holds gaze mode settings.
+type GazeConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	AgentInterval int  `yaml:"agent_interval"` // seconds, default 10
+	WebInterval   int  `yaml:"web_interval"`   // seconds, default 5
+	Timeout       int  `yaml:"timeout"`         // seconds without gaze ping to exit, default 30
 }
 
 // AgentConfig holds the agent configuration.
@@ -52,6 +61,12 @@ func DefaultServerConfig() ServerConfig {
 			TrafficRxMbps:   800,
 			TrafficTxMbps:   800,
 			CooldownSeconds: 300,
+		},
+		Gaze: GazeConfig{
+			Enabled:       true,
+			AgentInterval: 10,
+			WebInterval:   5,
+			Timeout:       30,
 		},
 	}
 }

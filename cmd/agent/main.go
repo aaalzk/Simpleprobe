@@ -50,18 +50,22 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	interval := time.Duration(cfg.Interval) * time.Second
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Send first report immediately
-	reportAndLog(collector, pusher, cfg.Name)
-	log.Printf("Agent running, reporting every %v", interval)
+	// Dynamic push loop: interval changes based on gaze mode
+	normalInterval := time.Duration(cfg.Interval) * time.Second
+	gazeInterval := 10 * time.Second
 
 	for {
+		reportAndLog(collector, pusher, cfg.Name)
+
+		// Adjust interval based on server's gaze response
+		if pusher.LastGaze() {
+			normalInterval = gazeInterval
+		} else {
+			normalInterval = time.Duration(cfg.Interval) * time.Second
+		}
+
 		select {
-		case <-ticker.C:
-			reportAndLog(collector, pusher, cfg.Name)
+		case <-time.After(normalInterval):
 		case sig := <-sigCh:
 			log.Printf("Received %v, shutting down", sig)
 			return

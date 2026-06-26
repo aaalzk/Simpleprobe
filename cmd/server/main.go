@@ -81,8 +81,12 @@ func main() {
 	// Set up HTTP routes
 	mux := http.NewServeMux()
 
+	// Start gaze tracker
+	gaze := server.NewGazeTracker(cfg.Gaze.Enabled, time.Duration(cfg.Gaze.Timeout)*time.Second)
+	gaze.Start()
+
 	// API routes
-	apiHandler := server.NewAPIHandler(store, alerter, cfg.Token, rateLimiter)
+	apiHandler := server.NewAPIHandler(store, alerter, cfg.Token, rateLimiter, gaze)
 	apiHandler.RegisterRoutes(mux)
 
 	// Static files (dashboard)

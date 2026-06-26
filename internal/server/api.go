@@ -17,11 +17,12 @@ type APIHandler struct {
 	alerter     *Alerter
 	token       string
 	rateLimiter *RateLimiter
+	gaze        *GazeTracker
 }
 
 // NewAPIHandler creates a new API handler.
-func NewAPIHandler(store *Store, alerter *Alerter, token string, rl *RateLimiter) *APIHandler {
-	return &APIHandler{store: store, alerter: alerter, token: token, rateLimiter: rl}
+func NewAPIHandler(store *Store, alerter *Alerter, token string, rl *RateLimiter, gaze *GazeTracker) *APIHandler {
+	return &APIHandler{store: store, alerter: alerter, token: token, rateLimiter: rl, gaze: gaze}
 }
 
 // RegisterRoutes sets up HTTP routes on the given mux. All API routes
@@ -150,7 +151,13 @@ func (h *APIHandler) handleReport(w http.ResponseWriter, r *http.Request) {
 	h.alerter.CheckServer(report.Name, m.CPUPercent, m.NetRxRate, m.NetTxRate, m.TopCPUProcs)
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(struct {
+		Status string `json:"status"`
+		Gaze   bool   `json:"gaze"`
+	}{
+		Status: "ok",
+		Gaze:   h.gaze.IsActive(),
+	})
 }
 
 // handleServers returns all servers' current state.
@@ -159,6 +166,9 @@ func (h *APIHandler) handleServers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Record gaze signal — someone is actively viewing the dashboard
+	h.gaze.Ping()
 
 	servers, err := h.store.GetAllServers()
 	if err != nil {
@@ -170,8 +180,16 @@ func (h *APIHandler) handleServers(w http.ResponseWriter, r *http.Request) {
 		servers = []ServerRecord{}
 	}
 
+	resp := struct {
+		Servers []ServerRecord `json:"servers"`
+		Gaze    bool           `json:"gaze"`
+	}{
+		Servers: servers,
+		Gaze:    h.gaze.IsActive(),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(servers)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // handleHistory returns historical report data for a server.

@@ -121,12 +121,12 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-wrap"><canvas id="history-chart"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
-<footer>Simpleprobe v1.1.6 · 刷新间隔 10s</footer>
+<footer>Simpleprobe v1.1.7 · 刷新间隔 10s</footer>
 </div>
 <script>
 (function(){
 'use strict';
-var REFRESH=10000,chartInst=null,selSrv=null;
+var REFRESH=10000,chartInst=null,selSrv=null,serverRefresh=10000,serverIntervalId=null;
 window.API_TOKEN="";
 function apiFetch(url, opts) {
 	opts = opts || {};
@@ -138,7 +138,7 @@ function apiFetch(url, opts) {
 }
 document.addEventListener('DOMContentLoaded',function(){
 updateClock();setInterval(updateClock,1000);
-fetchServers();setInterval(fetchServers,REFRESH);
+serverIntervalId=setInterval(fetchServers,serverRefresh);
 fetchAlerts();setInterval(fetchAlerts,30000);
 document.getElementById('chart-close').addEventListener('click',closeChart);
 document.getElementById('chart-metric').addEventListener('change',refreshChart);
@@ -146,7 +146,13 @@ document.getElementById('chart-hours').addEventListener('change',refreshChart);
 });
 function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}
 async function fetchServers(){
-try{var r=await apiFetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);renderServers(await r.json())}catch(e){console.error(e)}
+try{
+var r=await apiFetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);
+var data=await r.json();
+if(data.gaze){serverRefresh=5000}else{serverRefresh=10000}
+if(serverIntervalId){clearInterval(serverIntervalId);serverIntervalId=setInterval(fetchServers,serverRefresh)}
+renderServers(data.servers||[])
+}catch(e){console.error(e)}
 }
 function renderServers(s){
 var tb=document.getElementById('server-tbody');

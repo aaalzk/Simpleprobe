@@ -7,7 +7,8 @@
 - **Agent 零依赖**：单个静态编译的 Go 二进制文件，无需安装任何运行时或依赖
 - **Push 模式**：Agent 主动推送数据到 Server，Server 绝不反连 Agent（不执行命令）
 - **Cloudflare 友好**：Server 部署在 Cloudflare DNS 代理后面，解决跨国网络不稳定
-- **实时告警**：支持 Gotify 推送，覆盖离线/恢复/CPU 异常/流量异常
+- **实时告警**：支持 Gotify 推送，覆盖离线/恢复/CPU 异常/流量异常，CPU 告警包含 Top 3 进程详情
+- **凝视模式**：用户浏览 Dashboard 时自动加速更新频率（Agent 30s→10s，Web 10s→5s），离开后自动恢复
 - **历史趋势**：带 Chart.js 图表的历史数据仪表盘
 - **纯 Go SQLite**：使用 modernc.org/sqlite，无需 CGO，跨平台编译无忧
 
@@ -54,6 +55,12 @@ alerts:
   traffic_rx_mbps: 800
   traffic_tx_mbps: 800
   cooldown_seconds: 300
+
+gaze:
+  enabled: true
+  agent_interval: 10
+  web_interval: 5
+  timeout: 30
 
 history_retention_hours: 72
 ```
@@ -130,6 +137,11 @@ server {
     listen 80;
     server_name probe.your-domain.com;
 
+    # Cloudflare：让 Nginx 识别真实用户 IP（而非 Cloudflare 出口 IP）
+    # CF-Connecting-IP 由 Cloudflare 加密设置，此处声明信任该头
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header CF-Connecting-IP;
+
     # 可选：basic auth 作为额外保护层
     # auth_basic "Simpleprobe";
     # auth_basic_user_file /etc/nginx/.htpasswd;
@@ -166,6 +178,8 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d probe.your-domain.com
 ```
 
+> **关于 IP 识别**：配置 `real_ip_header CF-Connecting-IP` 后，Nginx 的 `$remote_addr` 和传给后端的 `X-Forwarded-For` 都会使用 Cloudflare 提供的真实用户 IP。Server 的速率限制和暴力破解检测因此能正确识别真实 IP，不会误封 Cloudflare 出口 IP。
+>
 > **关于速率限制**：Server 已内置认证失败速率限制（同 IP 60s 内失败 10 次封禁 5 分钟）和暴力破解告警。如需在 Nginx 层额外限制请求频率（例如防止 CC 攻击），可添加：
 >
 > ```nginx

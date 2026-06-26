@@ -55,7 +55,7 @@ func (a *Alerter) scanOffline() {
 			continue
 		}
 		msg := fmt.Sprintf("服务器 %s 已离线", name)
-		a.sendAlert(name, "offline", msg)
+		a.sendAlert(name, "offline", msg, msg)
 	}
 }
 
@@ -67,7 +67,7 @@ func (a *Alerter) SendRecoveryAlert(name string) {
 		return
 	}
 	msg := fmt.Sprintf("服务器 %s 已恢复上线", name)
-	a.sendAlert(name, "online", msg)
+	a.sendAlert(name, "online", msg, msg)
 }
 
 // CheckServer checks a single server's metrics for alert conditions.
@@ -76,15 +76,16 @@ func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64,
 	// Check CPU threshold
 	if cpuPct > a.cfg.CPUThreshold {
 		if !a.store.CheckAlertCooldown(name, "cpu", a.cfg.CooldownSeconds) {
-			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%)", name, cpuPct, a.cfg.CPUThreshold))
+			shortMsg := fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%)", name, cpuPct, a.cfg.CPUThreshold)
+			var fullMsg strings.Builder
+			fullMsg.WriteString(shortMsg)
 			if len(topCPUProcs) > 0 {
-				sb.WriteString("\n\n")
+				fullMsg.WriteString("\n\n")
 				for i, p := range topCPUProcs {
-					sb.WriteString(fmt.Sprintf("  %d. %s (PID: %d) %.1f%%\n", i+1, p.Name, p.PID, p.CPUPercent))
+					fullMsg.WriteString(fmt.Sprintf("  %d. %s (PID: %d) %.1f%%\n", i+1, p.Name, p.PID, p.CPUPercent))
 				}
 			}
-			a.sendAlert(name, "cpu", sb.String())
+			a.sendAlert(name, "cpu", shortMsg, fullMsg.String())
 		}
 	}
 
@@ -95,14 +96,14 @@ func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64,
 	if rxMbps > a.cfg.TrafficRxMbps {
 		if !a.store.CheckAlertCooldown(name, "traffic_rx", a.cfg.CooldownSeconds) {
 			msg := fmt.Sprintf("服务器 %s 入站流量异常: %.1f Mbps (阈值: %.0f Mbps)", name, rxMbps, a.cfg.TrafficRxMbps)
-			a.sendAlert(name, "traffic_rx", msg)
+			a.sendAlert(name, "traffic_rx", msg, msg)
 		}
 	}
 
 	if txMbps > a.cfg.TrafficTxMbps {
 		if !a.store.CheckAlertCooldown(name, "traffic_tx", a.cfg.CooldownSeconds) {
 			msg := fmt.Sprintf("服务器 %s 出站流量异常: %.1f Mbps (阈值: %.0f Mbps)", name, txMbps, a.cfg.TrafficTxMbps)
-			a.sendAlert(name, "traffic_tx", msg)
+			a.sendAlert(name, "traffic_tx", msg, msg)
 		}
 	}
 }
@@ -152,25 +153,26 @@ func (a *Alerter) SendSecurityAlert(alertType, message string) {
 }
 
 // sendAlert sends an alert via Gotify and records it in the database.
-func (a *Alerter) sendAlert(serverName, alertType, message string) {
-	log.Printf("ALERT [%s] %s: %s", alertType, serverName, message)
+// dbMsg is stored in DB (shown on web), gotifyMsg is sent to Gotify (can be more detailed).
+func (a *Alerter) sendAlert(serverName, alertType, dbMsg, gotifyMsg string) {
+	log.Printf("ALERT [%s] %s: %s", alertType, serverName, gotifyMsg)
 
-	// Record in database
-	if err := a.store.InsertAlert(serverName, alertType, message); err != nil {
+	// Record in database (short message for web display)
+	if err := a.store.InsertAlert(serverName, alertType, dbMsg); err != nil {
 		log.Printf("ERROR: insert alert: %v", err)
 	}
 	if err := a.store.SetAlertCooldown(serverName, alertType); err != nil {
 		log.Printf("ERROR: set cooldown: %v", err)
 	}
 
-	// Send to Gotify if configured
+	// Send to Gotify if configured (full message with details)
 	if a.gotify.URL == "" || a.gotify.Token == "" {
 		return
 	}
 
 	payload := map[string]interface{}{
 		"title":    fmt.Sprintf("[%s] %s", alertType, serverName),
-		"message":  message,
+		"message":  gotifyMsg,
 		"priority": 5,
 		"extras":   map[string]interface{}{},
 	}

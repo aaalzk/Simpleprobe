@@ -225,9 +225,18 @@ func (s *Store) MarkOffline(timeoutSeconds int) ([]string, error) {
 		return nil, err
 	}
 
-	// Then update them to offline
+	// Then update them to offline and clear stale metrics so the dashboard
+	// entry no longer shows the pre-offline values. Static fields (name, os,
+	// kernel) and last_seen are kept for context.
 	if len(names) > 0 {
-		if _, err := s.db.Exec(`UPDATE servers SET status = 'offline' WHERE status = 'online' AND last_seen < ?`, cutoff); err != nil {
+		query := `UPDATE servers SET status = 'offline',
+			cpu_percent = 0, mem_percent = 0, mem_total = 0, mem_used = 0,
+			disk_percent = 0, disk_total = 0, disk_used = 0,
+			net_rx_rate = 0, net_tx_rate = 0, net_rx_bytes = 0, net_tx_bytes = 0,
+			load_1 = 0, load_5 = 0, load_15 = 0,
+			uptime = 0, tcp_conns = 0, process_count = 0
+			WHERE status = 'online' AND last_seen < ?`
+		if _, err := s.db.Exec(query, cutoff); err != nil {
 			return nil, err
 		}
 	}

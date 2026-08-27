@@ -165,33 +165,37 @@ if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">暂无服务�
 // Table (desktop)
 tb.innerHTML=s.map(function(x){
 var sc=x.status==='online'?'online':'offline';
+var off=sc!=='online';
 var bc=function(v){return v>90?'high':v>70?'mid':'low'};
+function bar(v){if(off)return '--';return '<div class="bar-wrap"><div class="bar-fill '+bc(v)+'" style="width:'+Math.min(v,100)+'%"></div></div><span class="bar-value">'+v.toFixed(1)+'%</span>'}
 return '<tr class="server-row'+(selSrv===x.name?' selected':'')+'" data-name="'+esc(x.name)+'">'+
 '<td><span class="status-dot '+sc+'" title="'+x.status+'"></span></td>'+
 '<td><strong>'+esc(x.name)+'</strong><br><small>'+esc(x.os_name||'')+'</small></td>'+
-'<td><div class="bar-wrap"><div class="bar-fill '+bc(x.cpu_percent)+'" style="width:'+Math.min(x.cpu_percent,100)+'%"></div></div><span class="bar-value">'+x.cpu_percent.toFixed(1)+'%</span></td>'+
-'<td><div class="bar-wrap"><div class="bar-fill '+bc(x.mem_percent)+'" style="width:'+Math.min(x.mem_percent,100)+'%"></div></div><span class="bar-value">'+x.mem_percent.toFixed(1)+'%</span></td>'+
-'<td><div class="bar-wrap"><div class="bar-fill '+bc(x.disk_percent)+'" style="width:'+Math.min(x.disk_percent,100)+'%"></div></div><span class="bar-value">'+x.disk_percent.toFixed(1)+'%</span></td>'+
-'<td class="net-rate"><span class="rx">↓ '+fmtRate(x.net_rx_rate)+'</span></td>'+
-'<td class="net-rate"><span class="tx">↑ '+fmtRate(x.net_tx_rate)+'</span></td>'+
-'<td>'+x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1)+'</td>'+
-'<td>'+fmtUptime(x.uptime)+'</td><td>'+fmtAgo(x.last_seen)+'</td></tr>';
+'<td>'+bar(x.cpu_percent)+'</td>'+
+'<td>'+bar(x.mem_percent)+'</td>'+
+'<td>'+bar(x.disk_percent)+'</td>'+
+'<td class="net-rate">'+(off?'--':'<span class="rx">↓ '+fmtRate(x.net_rx_rate)+'</span>')+'</td>'+
+'<td class="net-rate">'+(off?'--':'<span class="tx">↑ '+fmtRate(x.net_tx_rate)+'</span>')+'</td>'+
+'<td>'+(off?'--':x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1))+'</td>'+
+'<td>'+(off?'--':fmtUptime(x.uptime))+'</td><td>'+fmtAgo(x.last_seen)+'</td></tr>';
 }).join('');
 // Cards (mobile)
 cards.innerHTML=s.map(function(x){
 var sc=x.status==='online'?'online':'offline';
+var off=sc!=='online';
 var bc=function(v){return v>90?'high':v>70?'mid':'low'};
+function cbar(v){if(off)return '--';return '<div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(v)+'" style="width:'+Math.min(v,100)+'%"></div></div> '+v.toFixed(1)+'%'}
 return '<div class="server-card'+(selSrv===x.name?' selected':'')+'" data-name="'+esc(x.name)+'">'+
 '<div class="sc-header"><span class="status-dot '+sc+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.os_name||'')+'</div></div></div>'+
 '<div class="sc-grid">'+
-'<div class="sc-item"><span class="sc-label">CPU</span><span><div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(x.cpu_percent)+'" style="width:'+Math.min(x.cpu_percent,100)+'%"></div></div> '+x.cpu_percent.toFixed(1)+'%</span></div>'+
-'<div class="sc-item"><span class="sc-label">内存</span><span><div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(x.mem_percent)+'" style="width:'+Math.min(x.mem_percent,100)+'%"></div></div> '+x.mem_percent.toFixed(1)+'%</span></div>'+
-'<div class="sc-item"><span class="sc-label">磁盘</span><span><div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(x.disk_percent)+'" style="width:'+Math.min(x.disk_percent,100)+'%"></div></div> '+x.disk_percent.toFixed(1)+'%</span></div>'+
-'<div class="sc-item"><span class="sc-label">负载</span><span>'+x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1)+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">网络 ↓</span><span class="sc-net rx">'+fmtRate(x.net_rx_rate)+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">网络 ↑</span><span class="sc-net tx">'+fmtRate(x.net_tx_rate)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">CPU</span><span>'+cbar(x.cpu_percent)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">内存</span><span>'+cbar(x.mem_percent)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">磁盘</span><span>'+cbar(x.disk_percent)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">负载</span><span>'+(off?'--':x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1))+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">网络 ↓</span><span class="sc-net rx">'+(off?'--':fmtRate(x.net_rx_rate))+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">网络 ↑</span><span class="sc-net tx">'+(off?'--':fmtRate(x.net_tx_rate))+'</span></div>'+
 '</div>'+
-'<div class="sc-footer"><span>在线 '+fmtUptime(x.uptime)+'</span><span>'+fmtAgo(x.last_seen)+'</span></div>'+
+'<div class="sc-footer"><span>'+(off?'--':'在线 '+fmtUptime(x.uptime))+'</span><span>'+fmtAgo(x.last_seen)+'</span></div>'+
 '</div>';
 }).join('');
 // Click handlers for both table and cards
@@ -231,10 +235,17 @@ chartInst=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:ml[m]|
 async function fetchAlerts(){
 try{var r=await apiFetch('/api/alerts');if(!r.ok)throw Error('HTTP '+r.status);renderAlerts(await r.json())}catch(e){console.error(e)}
 }
+function parseAlertTime(t){
+if(!t)return NaN;
+// Go 端输出 RFC3339（2026-06-18T12:34:56Z）；SQLite 原始格式为空格分隔无时区（2026-06-18 12:34:56, UTC）
+if(t.indexOf('T')<0)t=t.replace(' ','T')+'Z';
+var d=new Date(t);
+return isNaN(d.getTime())?NaN:d.getTime();
+}
 function renderAlerts(a){
 var c=document.getElementById('alert-list');
 var dayAgo=Date.now()-86400000;
-document.getElementById('count-alerts').textContent=a.filter(function(x){return new Date(x.sent_at+'Z').getTime()>dayAgo}).length;
+document.getElementById('count-alerts').textContent=a.filter(function(x){return parseAlertTime(x.sent_at)>dayAgo}).length;
 if(!a.length){c.innerHTML='<div class="alert-item" style="color:var(--text-dim)">暂无告警</div>';return}
 c.innerHTML=a.slice(0,20).map(function(x){
 var tc=x.type==='traffic_rx'||x.type==='traffic_tx'?'traffic_rx':x.type;

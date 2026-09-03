@@ -10,6 +10,7 @@
 - **实时告警**：支持 Gotify 推送，覆盖离线/恢复/CPU 异常/流量异常，CPU 告警包含 Top 3 进程详情
 - **凝视模式**：用户浏览 Dashboard 时自动加速更新频率（Agent 30s→10s，Web 10s→5s），离开后自动恢复
 - **历史趋势**：带 Chart.js 图表的历史数据仪表盘
+- **站点可用性监控**：Server 端周期性探测任意 HTTP/HTTPS 站点（状态码/延迟），Dashboard 展示当前状态与 24 小时可用率，故障/恢复触发 Gotify 告警
 - **纯 Go SQLite**：使用 modernc.org/sqlite，无需 CGO，跨平台编译无忧
 
 ## 架构
@@ -63,6 +64,15 @@ gaze:
   timeout: 30
 
 history_retention_hours: 72
+
+# 站点可用性监控（可选）：Server 周期性探测这些站点
+sites:
+  - name: "example"
+    url: "https://example.com"
+    # interval: 60   # 探测间隔秒，默认 60
+    # timeout: 10    # 请求超时秒，默认 10
+  - name: "github"
+    url: "https://github.com"
 ```
 
 ### 2. 部署 Agent
@@ -296,6 +306,27 @@ make build-server
 | `cpu` | CPU > 阈值 | 可配置 |
 | `traffic_rx` | 入站流量 > 阈值 | 可配置 |
 | `traffic_tx` | 出站流量 > 阈值 | 可配置 |
+| `site_down` | 站点探测失败（网络错误/超时/HTTP ≥ 400） | 同 offline |
+| `site_up` | 站点恢复可用时 | 同 site_down |
+
+### 站点可用性监控
+
+Server 会按 `sites` 配置对每个站点发起 HTTP(S) GET 请求（等价于
+`curl -L -o /dev/null -s -w "%{http_code}" https://example.com`），跟随重定向后：
+
+- 最终状态码 `200–399` → `up`（可用）
+- 网络错误、超时、或最终状态码 `≥ 400` → `down`（不可用）
+- 站点从 `up` 变 `down` 触发 `site_down` 告警，恢复触发 `site_up` 告警
+
+Dashboard 的「站点可用性」区块展示每个站点的当前状态、HTTP 状态码、延迟、
+24 小时可用率；点击站点可查看 24 小时逐小时可用率图表。
+
+相关 API：
+
+| 端点 | 说明 |
+|------|------|
+| `GET /api/sites` | 所有配置站点的当前状态 + 24h 可用率统计 |
+| `GET /api/sites/{name}/history?hours=24` | 单个站点的探测历史（状态码/延迟/错误） |
 
 ## 采集指标
 
@@ -330,7 +361,7 @@ cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
 
 ### 安全特性
 
-- **全端点鉴权**：所有 API 端点（`/api/report`、`/api/servers`、`/api/history`、`/api/alerts`）均需要 Bearer Token 认证
+- **全端点鉴权**：所有 API 端点（`/api/report`、`/api/servers`、`/api/history`、`/api/alerts`、`/api/sites`）均需要 Bearer Token 认证
 - **恒定时间比较**：Token 比较使用 `crypto/subtle.ConstantTimeCompare`，防止时序攻击
 - **速率限制**：同一 IP 在 60 秒内认证失败超过 10 次将被临时封禁 5 分钟
 - **暴力破解告警**：检测到暴力破解尝试时，会通过 Gotify 推送安全告警通知

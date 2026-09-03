@@ -55,6 +55,9 @@ func main() {
 			if err := store.CleanupOldReports(cfg.HistoryRetentionHrs); err != nil {
 				log.Printf("ERROR: cleanup old reports: %v", err)
 			}
+			if err := store.CleanupOldSiteChecks(cfg.HistoryRetentionHrs); err != nil {
+				log.Printf("ERROR: cleanup old site checks: %v", err)
+			}
 		}
 	}()
 
@@ -72,6 +75,10 @@ func main() {
 	alerter := server.NewAlerter(store, cfg.Alerts, cfg.Gotify)
 	alerter.Start()
 
+	// Start site availability monitor
+	siteMonitor := server.NewSiteMonitor(store, alerter, cfg.Sites, cfg.Alerts.CooldownSeconds)
+	siteMonitor.Start()
+
 	// Set up rate limiter alert callback
 	rateLimiter.OnAlert(func(ip string, count int) {
 		alerter.SendSecurityAlert("brute_force",
@@ -86,7 +93,7 @@ func main() {
 	gaze.Start()
 
 	// API routes
-	apiHandler := server.NewAPIHandler(store, alerter, cfg.Token, rateLimiter, gaze)
+	apiHandler := server.NewAPIHandler(store, alerter, cfg.Token, rateLimiter, gaze, cfg.Sites)
 	apiHandler.RegisterRoutes(mux)
 
 	// Static files (dashboard)

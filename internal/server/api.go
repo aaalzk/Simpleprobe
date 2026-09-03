@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/aaalzk/Simpleprobe/internal/agent"
+	"github.com/aaalzk/Simpleprobe/internal/config"
 )
 
 // APIHandler holds dependencies for the HTTP API.
@@ -18,11 +19,12 @@ type APIHandler struct {
 	token       string
 	rateLimiter *RateLimiter
 	gaze        *GazeTracker
+	sites       []config.SiteConfig
 }
 
 // NewAPIHandler creates a new API handler.
-func NewAPIHandler(store *Store, alerter *Alerter, token string, rl *RateLimiter, gaze *GazeTracker) *APIHandler {
-	return &APIHandler{store: store, alerter: alerter, token: token, rateLimiter: rl, gaze: gaze}
+func NewAPIHandler(store *Store, alerter *Alerter, token string, rl *RateLimiter, gaze *GazeTracker, sites []config.SiteConfig) *APIHandler {
+	return &APIHandler{store: store, alerter: alerter, token: token, rateLimiter: rl, gaze: gaze, sites: sites}
 }
 
 // RegisterRoutes sets up HTTP routes on the given mux. All API routes
@@ -32,6 +34,8 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/servers", h.authMiddleware(h.handleServers))
 	mux.HandleFunc("/api/history/", h.authMiddleware(h.handleHistory))
 	mux.HandleFunc("/api/alerts", h.authMiddleware(h.handleAlerts))
+	mux.HandleFunc("/api/sites", h.authMiddleware(h.handleSites))
+	mux.HandleFunc("/api/sites/", h.authMiddleware(h.handleSiteHistory))
 }
 
 // extractIP extracts the client IP from the request, respecting X-Forwarded-For.
@@ -246,6 +250,89 @@ func (h *APIHandler) handleAlerts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(alerts)
+}
+
+// handleSites returns the current status of every configured site together
+// with 24-hour uptime statistics. Sites that are configured but never probed
+// yet are included with status "unknown".
+func (h *APIHandler) handleSites(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.gaze.Ping()
+
+	states, err := h.store.GetAllSiteStates()
+	if err != nil {
+		log.Printf("ERROR: get site states: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	byName := make(map[string]SiteRecord, len(states))
+	for _, st := range states {
+		byName[st.Name] = st
+	}
+
+	sites := make([]SiteRecord, 0, len(h.sites))
+	for _, cfg := range h.sites {
+		if st, ok := byName[cfg.Name]; ok {
+			sites = append(sites, st)
+			continue
+		}
+		// Configured but not yet probed.
+		sites = append(sites, SiteRecord{
+			Name:       cfg.Name,
+			URL:        cfg.URL,
+			Status:     "unknown",
+			StatusCode: 0,
+			LatencyMs:  -1,
+			Uptime24h:  -1,
+		})
+	}
+
+	resp := struct {
+		Sites []SiteRecord `json:"sites"`
+		Gaze  bool         `json:"gaze"`
+	}{Sites: sites, Gaze: h.gaze.IsActive()}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleSiteHistory returns probe history for one configured site.
+// URL: /api/sites/{name}/history?hours=24
+func (h *APIHandler) handleSiteHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := strings.TrimPrefix(r.URL.Path, "/api/sites/")
+	name = strings.TrimSuffix(name, "/history")
+	if name == "" || strings.Contains(name, "/") {
+		http.Error(w, "site name required", http.StatusBadRequest)
+		return
+	}
+
+	hours := 24
+	if hStr := r.URL.Query().Get("hours"); hStr != "" {
+		if v, err := parseInt(hStr); err == nil && v > 0 && v <= 168 {
+			hours = v
+		}
+	}
+
+	checks, err := h.store.GetSiteHistory(name, hours)
+	if err != nil {
+		log.Printf("ERROR: get site history %s: %v", name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if checks == nil {
+		checks = []SiteCheckRecord{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(checks)
 }
 
 func parseInt(s string) (int, error) {

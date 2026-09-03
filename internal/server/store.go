@@ -57,11 +57,37 @@ type ReportRecord struct {
 
 // AlertRecord is an alert history entry.
 type AlertRecord struct {
-	ID        int64     `json:"id"`
-	ServerName string   `json:"server_name"`
-	Type      string    `json:"type"` // "offline", "online", "cpu", "traffic"
-	Message   string    `json:"message"`
-	SentAt    time.Time `json:"sent_at"`
+	ID         int64     `json:"id"`
+	ServerName string    `json:"server_name"`
+	Type       string    `json:"type"` // "offline", "online", "cpu", "traffic"
+	Message    string    `json:"message"`
+	SentAt     time.Time `json:"sent_at"`
+}
+
+// SiteRecord is the current (latest) state of a monitored site.
+type SiteRecord struct {
+	Name       string    `json:"name"`
+	URL        string    `json:"url"`
+	Status     string    `json:"status"`      // "up" or "down"
+	StatusCode int       `json:"status_code"` // 0 if network error / timeout
+	LatencyMs  float64   `json:"latency_ms"`  // -1 if network error / timeout
+	Error      string    `json:"error"`
+	LastCheck  time.Time `json:"last_check"`
+	Uptime24h  float64   `json:"uptime_24h"` // percentage 0-100, -1 if no data
+	Checks24h  int       `json:"checks_24h"`
+	Downs24h   int       `json:"downs_24h"`
+}
+
+// SiteCheckRecord is a single probe result in the history.
+type SiteCheckRecord struct {
+	ID         int64     `json:"id"`
+	SiteName   string    `json:"site_name"`
+	URL        string    `json:"url"`
+	Timestamp  time.Time `json:"timestamp"`
+	Status     string    `json:"status"`      // "up" or "down"
+	StatusCode int       `json:"status_code"` // 0 if network error / timeout
+	LatencyMs  float64   `json:"latency_ms"`  // -1 if network error / timeout
+	Error      string    `json:"error"`
 }
 
 // NewStore opens (or creates) the SQLite database and runs migrations.
@@ -133,6 +159,26 @@ func (s *Store) migrate() error {
 			alert_type  TEXT NOT NULL,
 			last_sent   DATETIME NOT NULL,
 			PRIMARY KEY (server_name, alert_type)
+		)`,
+		`CREATE TABLE IF NOT EXISTS site_checks (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			site_name   TEXT NOT NULL,
+			url         TEXT NOT NULL,
+			timestamp   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			status      TEXT NOT NULL,
+			status_code INTEGER NOT NULL DEFAULT 0,
+			latency_ms  REAL NOT NULL DEFAULT -1,
+			error       TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_site_checks_name_time ON site_checks(site_name, timestamp)`,
+		`CREATE TABLE IF NOT EXISTS site_states (
+			name        TEXT PRIMARY KEY,
+			url         TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT 'down',
+			status_code INTEGER NOT NULL DEFAULT 0,
+			latency_ms  REAL NOT NULL DEFAULT -1,
+			error       TEXT NOT NULL DEFAULT '',
+			last_check  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 	}
 	for _, q := range queries {
@@ -318,6 +364,128 @@ func (s *Store) GetHistory(name string, hours int) ([]ReportRecord, error) {
 		reports = append(reports, r)
 	}
 	return reports, rows.Err()
+}
+
+// UpsertSiteState records the latest probe result for a site.
+func (s *Store) UpsertSiteState(name, url, status string, statusCode int, latencyMs float64, errMsg string) error {
+	query := `INSERT INTO site_states (name, url, status, status_code, latency_ms, error, last_check)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(name) DO UPDATE SET
+			url         = excluded.url,
+			status      = excluded.status,
+			status_code = excluded.status_code,
+			latency_ms  = excluded.latency_ms,
+			error       = excluded.error,
+			last_check  = excluded.last_check`
+	_, err := s.db.Exec(query, name, url, status, statusCode, latencyMs, errMsg)
+	return err
+}
+
+// InsertSiteCheck appends one probe result to the history table.
+func (s *Store) InsertSiteCheck(name, url, status string, statusCode int, latencyMs float64, errMsg string) error {
+	query := `INSERT INTO site_checks (site_name, url, timestamp, status, status_code, latency_ms, error)
+		VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)`
+	_, err := s.db.Exec(query, name, url, status, statusCode, latencyMs, errMsg)
+	return err
+}
+
+// GetSiteState returns the latest probe state for one site, or nil if never probed.
+func (s *Store) GetSiteState(name string) (*SiteRecord, error) {
+	query := `SELECT name, url, status, status_code, latency_ms, error, last_check
+		FROM site_states WHERE name = ?`
+	var sr SiteRecord
+	err := s.db.QueryRow(query, name).Scan(&sr.Name, &sr.URL, &sr.Status, &sr.StatusCode, &sr.LatencyMs, &sr.Error, &sr.LastCheck)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &sr, nil
+}
+
+// GetAllSiteStates returns the latest probe state for every site that has
+// been probed, with 24-hour uptime statistics attached.
+func (s *Store) GetAllSiteStates() ([]SiteRecord, error) {
+	rows, err := s.db.Query(`SELECT name, url, status, status_code, latency_ms, error, last_check FROM site_states ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sites []SiteRecord
+	for rows.Next() {
+		var sr SiteRecord
+		if err := rows.Scan(&sr.Name, &sr.URL, &sr.Status, &sr.StatusCode, &sr.LatencyMs, &sr.Error, &sr.LastCheck); err != nil {
+			return nil, err
+		}
+		sites = append(sites, sr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range sites {
+		uptime, total, downs, err := s.SiteUptime24h(sites[i].Name)
+		if err != nil {
+			return nil, err
+		}
+		sites[i].Uptime24h = uptime
+		sites[i].Checks24h = total
+		sites[i].Downs24h = downs
+	}
+	return sites, nil
+}
+
+// SiteUptime24h returns (uptime percent, total checks, down checks) for the
+// last 24 hours. Uptime is -1 when there is no data in the window.
+func (s *Store) SiteUptime24h(name string) (float64, int, int, error) {
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	var total, downs int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='down' THEN 1 ELSE 0 END), 0)
+		 FROM site_checks WHERE site_name = ? AND timestamp >= ?`,
+		name, cutoff,
+	).Scan(&total, &downs)
+	if err != nil {
+		return -1, 0, 0, err
+	}
+	if total == 0 {
+		return -1, 0, 0, nil
+	}
+	uptime := float64(total-downs) / float64(total) * 100
+	return uptime, total, downs, nil
+}
+
+// GetSiteHistory returns probe history for a site within the given number of hours.
+func (s *Store) GetSiteHistory(name string, hours int) ([]SiteCheckRecord, error) {
+	cutoff := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	query := `SELECT id, site_name, url, timestamp, status, status_code, latency_ms, error
+		FROM site_checks WHERE site_name = ? AND timestamp >= ?
+		ORDER BY timestamp ASC`
+
+	rows, err := s.db.Query(query, name, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var checks []SiteCheckRecord
+	for rows.Next() {
+		var c SiteCheckRecord
+		if err := rows.Scan(&c.ID, &c.SiteName, &c.URL, &c.Timestamp, &c.Status, &c.StatusCode, &c.LatencyMs, &c.Error); err != nil {
+			return nil, err
+		}
+		checks = append(checks, c)
+	}
+	return checks, rows.Err()
+}
+
+// CleanupOldSiteChecks removes site probe history older than the retention window.
+func (s *Store) CleanupOldSiteChecks(retentionHours int) error {
+	cutoff := time.Now().UTC().Add(-time.Duration(retentionHours) * time.Hour)
+	_, err := s.db.Exec(`DELETE FROM site_checks WHERE timestamp < ?`, cutoff)
+	return err
 }
 
 // InsertAlert records an alert event.

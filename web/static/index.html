@@ -24,7 +24,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 header{display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--border);margin-bottom:20px}
 header h1{font-size:1.5rem;font-weight:600}
 #clock{color:var(--text-dim);font-size:.9rem}
-.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.summary{display:grid;grid-template-columns:repeat(6,1fr);gap:16px;margin-bottom:20px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;text-align:center}
 .card-value{font-size:2rem;font-weight:700}
 .card-label{color:var(--text-dim);font-size:.85rem;margin-top:4px}
@@ -32,6 +32,8 @@ header h1{font-size:1.5rem;font-weight:600}
 .card.offline .card-value{color:var(--red)}
 .card.total .card-value{color:var(--blue)}
 .card.alerts .card-value{color:var(--yellow)}
+.card.sites-up .card-value{color:var(--green)}
+.card.sites-down .card-value{color:var(--red)}
 .table-wrapper{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:20px}
 table{width:100%;border-collapse:collapse;font-size:.9rem}
 th{text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:500;background:#1e2130;white-space:nowrap;position:sticky;top:0}
@@ -68,6 +70,24 @@ tr.empty-row td{text-align:center;color:var(--text-dim);padding:32px}
 .alert-type.online{background:#1e2a1e;color:var(--green)}
 .alert-type.cpu{background:#1e1e3d;color:var(--blue)}
 .alert-type.traffic_rx,.alert-type.traffic_tx{background:#3d2e1e;color:var(--yellow)}
+.alert-type.site_down{background:#3d1e1e;color:var(--red)}
+.alert-type.site_up{background:#1e2a1e;color:var(--green)}
+.sites-panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:20px}
+.sites-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.sites-header h3{font-size:1rem}
+.sites-hint{color:var(--text-dim);font-size:.8rem}
+.sites-tbl{margin-bottom:0}
+.status-dot.unknown{background:var(--text-dim)}
+.site-chart-summary{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px;font-size:.9rem}
+.site-chart-summary .scs-item .scs-label{color:var(--text-dim);font-size:.78rem}
+.site-chart-summary .scs-item .scs-value{font-size:1.4rem;font-weight:700}
+.scs-value.up{color:var(--green)}
+.scs-value.down{color:var(--red)}
+.scs-value.mid{color:var(--yellow)}
+@media(max-width:768px){
+.sites-tbl{display:none}
+.sites-panel .server-cards{display:block}
+}
 .alert-time{color:var(--text-dim);white-space:nowrap}
 .chart-wrap{position:relative;height:300px;max-height:60vh}
 footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
@@ -101,6 +121,8 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="card offline"><div class="card-value" id="count-offline">0</div><div class="card-label">离线</div></div>
 <div class="card total"><div class="card-value" id="count-total">0</div><div class="card-label">总计</div></div>
 <div class="card alerts"><div class="card-value" id="count-alerts">0</div><div class="card-label">告警 (24h)</div></div>
+<div class="card sites-up"><div class="card-value" id="count-sites-up">0</div><div class="card-label">站点正常</div></div>
+<div class="card sites-down"><div class="card-value" id="count-sites-down">0</div><div class="card-label">站点异常</div></div>
 </div>
 <div class="table-wrapper">
 <table id="server-table">
@@ -109,6 +131,29 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 </table>
 </div>
 <div class="server-cards" id="server-cards"></div>
+<div class="sites-panel">
+<div class="sites-header">
+<h3>🌐 站点可用性</h3>
+<span id="sites-hint" class="sites-hint"></span>
+</div>
+<div class="table-wrapper sites-tbl">
+<table id="sites-table">
+<thead><tr><th>状态</th><th>名称</th><th>URL</th><th>HTTP</th><th>延迟</th><th>24h 可用率</th><th>最后检查</th></tr></thead>
+<tbody id="sites-tbody"><tr class="empty-row"><td colspan="7">等待数据...</td></tr></tbody>
+</table>
+</div>
+<div class="server-cards" id="sites-cards"></div>
+</div>
+<div class="chart-panel" id="site-chart-panel" style="display:none">
+<div class="chart-header">
+<h3 id="site-chart-title">站点可用性 - 24h</h3>
+<div class="chart-controls">
+<button id="site-chart-close" class="btn-close">✕ 关闭</button>
+</div>
+</div>
+<div class="site-chart-summary" id="site-chart-summary"></div>
+<div class="chart-wrap"><canvas id="site-history-chart"></canvas></div>
+</div>
 <div class="chart-panel" id="chart-panel" style="display:none">
 <div class="chart-header">
 <h3 id="chart-title">历史趋势</h3>
@@ -121,12 +166,13 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-wrap"><canvas id="history-chart"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
-<footer>Simpleprobe v1.2.0 · 刷新间隔 10s</footer>
+<footer>Simpleprobe v1.3.0 · 刷新间隔 10s</footer>
 </div>
 <script>
 (function(){
 'use strict';
 var REFRESH=10000,chartInst=null,selSrv=null,serverRefresh=10000,serverIntervalId=null;
+var siteChartInst=null,selSite=null;
 window.API_TOKEN="";
 function apiFetch(url, opts) {
 	opts = opts || {};
@@ -141,9 +187,11 @@ updateClock();setInterval(updateClock,1000);
 fetchServers();
 serverIntervalId=setInterval(fetchServers,serverRefresh);
 fetchAlerts();setInterval(fetchAlerts,30000);
+fetchSites();setInterval(fetchSites,30000);
 document.getElementById('chart-close').addEventListener('click',closeChart);
 document.getElementById('chart-metric').addEventListener('change',refreshChart);
 document.getElementById('chart-hours').addEventListener('change',refreshChart);
+document.getElementById('site-chart-close').addEventListener('click',closeSiteChart);
 });
 function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}
 async function fetchServers(){
@@ -231,6 +279,117 @@ var ctx=document.getElementById('history-chart').getContext('2d');
 if(chartInst)chartInst.destroy();
 chartInst=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:ml[m]||m,data:values,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:20,maxRotation:0},grid:{color:'#1e2130'}},y:{ticks:{color:'#6e7681'},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false}}}});
 }catch(e){console.error(e)}
+}
+async function fetchSites(){
+try{
+var r=await apiFetch('/api/sites');if(!r.ok)throw Error('HTTP '+r.status);
+renderSites((await r.json()).sites||[]);
+}catch(e){console.error(e)}
+}
+function siteStatusClass(st){return st==='up'?'online':(st==='down'?'offline':'unknown')}
+function latencyTxt(x){
+if(typeof x.latency_ms!=='number'||x.latency_ms<0)return '--';
+if(x.latency_ms<1000)return x.latency_ms.toFixed(0)+' ms';
+return (x.latency_ms/1000).toFixed(2)+' s';
+}
+function uptimeTxt(x){
+if(typeof x.uptime_24h!=='number'||x.uptime_24h<0)return '--';
+return x.uptime_24h.toFixed(2)+'%';
+}
+function renderSites(s){
+document.getElementById('count-sites-up').textContent=s.filter(function(x){return x.status==='up'}).length;
+document.getElementById('count-sites-down').textContent=s.filter(function(x){return x.status!=='up'&&x.status!=='unknown'}).length;
+var hint=document.getElementById('sites-hint');
+if(!s.length){hint.textContent='未配置站点（在 server.yml 中添加 sites 段）';}
+else{hint.textContent='每站点独立探测间隔，默认 60s'}
+var tb=document.getElementById('sites-tbody');
+var cards=document.getElementById('sites-cards');
+if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="7">未配置站点监控</td></tr>';cards.innerHTML='';return}
+function row(x){
+var sc=siteStatusClass(x.status);
+var codeTxt=x.status_code>0?x.status_code:'--';
+var httpCls=(x.status_code>=200&&x.status_code<400)?'online':'offline';
+var upCls=(x.uptime_24h>=99)?'online':(x.uptime_24h>=90?'mid':'offline');
+return '<tr class="server-row site-row'+(selSite===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
+'<td><span class="status-dot '+sc+'" title="'+esc(x.status)+'"></span></td>'+
+'<td><strong>'+esc(x.name)+'</strong></td>'+
+'<td style="white-space:normal;word-break:break-all;max-width:340px"><small>'+esc(x.url)+'</small></td>'+
+'<td><span class="'+httpCls+'">'+codeTxt+'</span></td>'+
+'<td>'+latencyTxt(x)+'</td>'+
+'<td class="'+upCls+'">'+uptimeTxt(x)+'</td>'+
+'<td>'+fmtAgo(x.last_check)+'</td></tr>';
+}
+tb.innerHTML=s.map(row).join('');
+cards.innerHTML=s.map(function(x){
+var sc=siteStatusClass(x.status);
+var upCls=(x.uptime_24h>=99)?'online':(x.uptime_24h>=90?'mid':'offline');
+return '<div class="server-card site-card'+(selSite===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
+'<div class="sc-header"><span class="status-dot '+sc+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.url)+'</div></div></div>'+
+'<div class="sc-grid">'+
+'<div class="sc-item"><span class="sc-label">HTTP</span><span>'+(x.status_code>0?x.status_code:'--')+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">延迟</span><span>'+latencyTxt(x)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">24h可用率</span><span class="'+upCls+'">'+uptimeTxt(x)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">最后检查</span><span>'+fmtAgo(x.last_check)+'</span></div>'+
+'</div></div>';
+}).join('');
+var rows=document.querySelectorAll('.site-row');
+var cardEls=document.querySelectorAll('.site-card');
+function clickHandler(n){if(selSite===n)closeSiteChart();else selectSite(n)}
+rows.forEach(function(r){r.addEventListener('click',function(){clickHandler(r.dataset.site)})});
+cardEls.forEach(function(c){c.addEventListener('click',function(){clickHandler(c.dataset.site)})});
+}
+function selectSite(n){
+selSite=n;
+document.getElementById('site-chart-title').textContent='站点可用性 - '+n+' (24h)';
+document.getElementById('site-chart-panel').style.display='block';
+document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.toggle('selected',r.dataset.site===n)});
+fetchSiteHistory(n);
+}
+function closeSiteChart(){
+selSite=null;document.getElementById('site-chart-panel').style.display='none';
+if(siteChartInst){siteChartInst.destroy();siteChartInst=null}
+document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.remove('selected')});
+}
+async function fetchSiteHistory(name){
+try{
+var r=await apiFetch('/api/sites/'+encodeURIComponent(name)+'/history?hours=24');
+if(!r.ok)throw Error('HTTP '+r.status);
+renderSiteChart(name,await r.json());
+}catch(e){console.error(e)}
+}
+function renderSiteChart(name,checks){
+var summary=document.getElementById('site-chart-summary');
+var upN=0,downN=0,sumMs=0;
+checks.forEach(function(c){if(c.status==='up'){upN++;if(c.latency_ms>=0)sumMs+=c.latency_ms}else{downN++}});
+var upPct=checks.length?upN/checks.length*100:-1;
+var avgMs=upN?sumMs/upN:-1;
+summary.innerHTML=
+'<div class="scs-item"><div class="scs-label">24h 可用率</div><div class="scs-value '+(upPct>=99?'up':(upPct>=90?'mid':'down'))+'">'+(upPct<0?'--':upPct.toFixed(2)+'%')+'</div></div>'+
+'<div class="scs-item"><div class="scs-label">探测次数</div><div class="scs-value">'+checks.length+'</div></div>'+
+'<div class="scs-item"><div class="scs-label">失败次数</div><div class="scs-value '+(downN?'down':'up')+'">'+downN+'</div></div>'+
+'<div class="scs-item"><div class="scs-label">平均延迟(可用)</div><div class="scs-value">'+(avgMs<0?'--':avgMs.toFixed(0)+' ms')+'</div></div>';
+var labels=checks.map(function(c){return fmtTime(c.timestamp)});
+// Aggregate into per-hour buckets for a compact 24-bar chart.
+var hourly={};
+checks.forEach(function(c){
+var d=new Date(c.timestamp);
+var key=d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()+' '+d.getHours()+':00';
+if(!hourly[key])hourly[key]={up:0,total:0};
+hourly[key].total++;if(c.status==='up')hourly[key].up++;
+});
+var keys=Object.keys(hourly);
+var hLabels=keys.map(function(k){var p=k.split(' ');return p[1]});
+var hVals=keys.map(function(k){var b=hourly[k];return b.total?Math.round(b.up/b.total*100):0});
+var hColors=hVals.map(function(v){return v>=99?'#3fb950':(v>=90?'#d29922':'#f85149')});
+var ctx=document.getElementById('site-history-chart').getContext('2d');
+if(siteChartInst)siteChartInst.destroy();
+siteChartInst=new Chart(ctx,{type:'bar',data:{labels:hLabels,datasets:[{label:'每小时可用率 %',data:hVals,backgroundColor:hColors,borderRadius:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:24,maxRotation:45},grid:{display:false}},y:{ticks:{color:'#6e7681',max:100},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false},tooltip:{callbacks:{label:function(cc){return '可用率 '+cc.parsed.y+'%'}}}}}});
+}
+function fmtTime(t){
+if(!t)return '--';
+var d=new Date(t);
+if(isNaN(d.getTime()))return '--';
+return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
 async function fetchAlerts(){
 try{var r=await apiFetch('/api/alerts');if(!r.ok)throw Error('HTTP '+r.status);renderAlerts(await r.json())}catch(e){console.error(e)}

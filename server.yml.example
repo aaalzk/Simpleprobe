@@ -17,3 +17,12 @@ alerts:
   cooldown_seconds: 300          # Minimum seconds between same-type alerts per server
 
 history_retention_hours: 72      # How long to keep historical data
+
+# Site availability monitoring (站点可用性监控)
+# Server probes each site's HTTP(S) status code periodically, records history,
+# and shows 24h uptime on the dashboard. Failures/recoveries raise Gotify alerts.
+sites:
+  - name: "example"              # Display name, must be unique
+    url: "https://example.com"   # Full URL to probe
+    # interval: 60               # Probe interval in seconds (default 60)
+    # timeout: 10                # Request timeout in seconds (default 10)

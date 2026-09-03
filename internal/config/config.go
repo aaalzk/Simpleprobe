@@ -15,6 +15,15 @@ type ServerConfig struct {
 	Alerts              AlertConfig   `yaml:"alerts"`
 	Gaze                GazeConfig    `yaml:"gaze"`
 	HistoryRetentionHrs int           `yaml:"history_retention_hours"`
+	Sites               []SiteConfig  `yaml:"sites"`
+}
+
+// SiteConfig holds a single site availability monitor target.
+type SiteConfig struct {
+	Name     string `yaml:"name"`     // display name, also used for history lookup
+	URL      string `yaml:"url"`      // full URL to probe (http:// or https://)
+	Interval int    `yaml:"interval"` // probe interval in seconds, default 60
+	Timeout  int    `yaml:"timeout"`  // request timeout in seconds, default 10
 }
 
 // GotifyConfig holds Gotify push notification settings.

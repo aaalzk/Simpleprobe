@@ -166,7 +166,7 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-wrap"><canvas id="history-chart"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
-<footer>Simpleprobe v1.3.0 · 刷新间隔 10s</footer>
+<footer>Simpleprobe v1.3.1 · 刷新间隔 10s</footer>
 </div>
 <script>
 (function(){
@@ -254,6 +254,7 @@ rows.forEach(function(r){r.addEventListener('click',function(){clickHandler(r.da
 cardEls.forEach(function(c){c.addEventListener('click',function(){clickHandler(c.dataset.name)})});
 }
 function selectServer(n){
+if(selSite)closeSiteChart();
 selSrv=n;document.getElementById('chart-title').textContent='历史趋势 - '+n;
 document.getElementById('chart-panel').style.display='block';
 document.querySelectorAll('.server-row,.server-card').forEach(function(r){r.classList.toggle('selected',r.dataset.name===n)});
@@ -265,7 +266,7 @@ if(chartInst){chartInst.destroy();chartInst=null}
 document.querySelectorAll('.server-row,.server-card').forEach(function(r){r.classList.remove('selected')});
 }
 async function refreshChart(){
-if(!selSrv)return;
+if(!selSrv||document.getElementById('chart-panel').style.display==='none')return;
 var m=document.getElementById('chart-metric').value;
 var h=document.getElementById('chart-hours').value;
 try{
@@ -339,6 +340,7 @@ rows.forEach(function(r){r.addEventListener('click',function(){clickHandler(r.da
 cardEls.forEach(function(c){c.addEventListener('click',function(){clickHandler(c.dataset.site)})});
 }
 function selectSite(n){
+if(selSrv)closeChart();
 selSite=n;
 document.getElementById('site-chart-title').textContent='站点可用性 - '+n+' (24h)';
 document.getElementById('site-chart-panel').style.display='block';

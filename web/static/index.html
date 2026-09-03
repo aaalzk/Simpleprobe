@@ -189,7 +189,8 @@ if(detailChart){detailChart.destroy();detailChart=null}
 detail=null;
 document.getElementById('detail-panel').style.display='none';
 document.getElementById('detail-summary').innerHTML='';
-document.querySelectorAll('.server-row,.server-card,.site-row,.site-card').forEach(function(r){r.classList.remove('selected')});
+document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.remove('selected')});
+document.querySelectorAll('.server-row:not(.site-row),.server-card:not(.site-card)').forEach(function(r){r.classList.remove('selected')});
 }
 function openServerDetail(name){
 if(detail&&detail.type==='site'){detail=null}
@@ -199,7 +200,7 @@ document.getElementById('detail-controls').innerHTML=METRIC_HTML;
 document.getElementById('detail-summary').innerHTML='';
 document.getElementById('detail-panel').style.display='block';
 document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.remove('selected')});
-document.querySelectorAll('.server-row,.server-card').forEach(function(r){r.classList.toggle('selected',r.dataset.name===name)});
+document.querySelectorAll('.server-row:not(.site-row),.server-card:not(.site-card)').forEach(function(r){r.classList.toggle('selected',r.dataset.name===name)});
 bindDetailControls();
 refreshServerDetail();
 }
@@ -209,7 +210,7 @@ detail={type:'site',name:name};
 document.getElementById('detail-title').textContent='站点可用性 - '+name+' (24h)';
 document.getElementById('detail-controls').innerHTML='<button id="detail-close" class="btn-close">✕ 关闭</button>';
 document.getElementById('detail-panel').style.display='block';
-document.querySelectorAll('.server-row,.server-card').forEach(function(r){r.classList.remove('selected')});
+document.querySelectorAll('.server-row:not(.site-row),.server-card:not(.site-card)').forEach(function(r){r.classList.remove('selected')});
 document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.toggle('selected',r.dataset.site===name)});
 bindDetailControls();
 refreshSiteDetail(name);

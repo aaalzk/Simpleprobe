@@ -84,14 +84,9 @@ tr.empty-row td{text-align:center;color:var(--text-dim);padding:32px}
 .scs-value.up{color:var(--green)}
 .scs-value.down{color:var(--red)}
 .scs-value.mid{color:var(--yellow)}
-@media(max-width:768px){
-.sites-tbl{display:none}
-.sites-panel .server-cards{display:block}
-}
 .alert-time{color:var(--text-dim);white-space:nowrap}
 .chart-wrap{position:relative;height:300px;max-height:60vh}
 footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
-/* Mobile card view */
 .server-cards{display:none}
 .server-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer}
 .server-card:hover{background:#22263a}
@@ -153,270 +148,165 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-wrap"><canvas id="detail-canvas"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
-<footer>Simpleprobe v1.3.1 · 刷新间隔 10s</footer>
+<footer>Simpleprobe v1.3.4 · 刷新间隔 10s</footer>
 </div>
 <script>
 (function(){
 'use strict';
-var REFRESH=10000,detailChart=null,detail=null,serverRefresh=10000,serverIntervalId=null;
+var detail=null,detailChart=null,serverRefresh=10000,serverIntervalId=null;
 window.API_TOKEN="";
-function apiFetch(url, opts) {
-	opts = opts || {};
-	opts.headers = opts.headers || {};
-	if (window.API_TOKEN) {
-		opts.headers['Authorization'] = 'Bearer ' + window.API_TOKEN;
-	}
-	return fetch(url, opts);
-}
-document.addEventListener('DOMContentLoaded',function(){
-updateClock();setInterval(updateClock,1000);
-fetchServers();
-serverIntervalId=setInterval(fetchServers,serverRefresh);
-fetchAlerts();setInterval(fetchAlerts,30000);
-fetchSites();setInterval(fetchSites,30000);
-bindDetailControls();
-});
-function bindDetailControls(){
-var c=document.getElementById('detail-close');if(c)c.addEventListener('click',closeDetail);
-var m=document.getElementById('detail-metric');if(m)m.addEventListener('change',refreshServerDetail);
-var h=document.getElementById('detail-hours');if(h)h.addEventListener('change',refreshServerDetail);
-}
-function updateClock(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}
-// ── detail panel (unified) ──
-var METRIC_HTML='<select id="detail-metric"><option value="cpu_percent">CPU</option><option value="mem_percent">内存</option><option value="disk_percent">磁盘</option><option value="net_rx_rate">网络入站</option><option value="net_tx_rate">网络出站</option><option value="load_1">负载 1min</option></select><select id="detail-hours"><option value="1">1小时</option><option value="6">6小时</option><option value="24" selected>24小时</option><option value="72">72小时</option></select>';
+function apiFetch(url,opts){opts=opts||{};opts.headers=opts.headers||{};if(window.API_TOKEN)opts.headers['Authorization']='Bearer '+window.API_TOKEN;return fetch(url,opts)}
 function closeDetail(){
-if(detailChart){detailChart.destroy();detailChart=null}
 detail=null;
+if(detailChart){detailChart.destroy();detailChart=null}
 document.getElementById('detail-panel').style.display='none';
 document.getElementById('detail-summary').innerHTML='';
-document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.remove('selected')});
-document.querySelectorAll('.server-row:not(.site-row),.server-card:not(.site-card)').forEach(function(r){r.classList.remove('selected')});
+document.querySelectorAll('.selected').forEach(function(r){r.classList.remove('selected')});
 }
-function openServerDetail(name){
-if(detail&&detail.type==='site'){detail=null}
-detail={type:'server',name:name};
-document.getElementById('detail-title').textContent='历史趋势 - '+name;
-document.getElementById('detail-controls').innerHTML=METRIC_HTML;
-document.getElementById('detail-summary').innerHTML='';
+function openDetail(type,name){
+if(detail&&detail.type===type&&detail.name===name){closeDetail();return}
+closeDetail();
+detail={type:type,name:name};
+document.querySelectorAll('[data-name="'+name+'"],[data-site="'+name+'"]').forEach(function(r){r.classList.add('selected')});
 document.getElementById('detail-panel').style.display='block';
-document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.remove('selected')});
-document.querySelectorAll('.server-row:not(.site-row),.server-card:not(.site-card)').forEach(function(r){r.classList.toggle('selected',r.dataset.name===name)});
-bindDetailControls();
-refreshServerDetail();
-}
-function openSiteDetail(name){
-if(detail&&detail.type==='server'){detail=null}
-detail={type:'site',name:name};
+if(type==='server'){
+document.getElementById('detail-title').textContent='历史趋势 - '+name;
+document.getElementById('detail-controls').innerHTML='<select id="detail-metric"><option value="cpu_percent">CPU</option><option value="mem_percent">内存</option><option value="disk_percent">磁盘</option><option value="net_rx_rate">网络入站</option><option value="net_tx_rate">网络出站</option><option value="load_1">负载 1min</option></select><select id="detail-hours"><option value="1">1小时</option><option value="6">6小时</option><option value="24" selected>24小时</option><option value="72">72小时</option></select>';
+document.getElementById('detail-summary').innerHTML='';
+document.getElementById('detail-metric').onchange=loadServerChart;
+document.getElementById('detail-hours').onchange=loadServerChart;
+loadServerChart();
+}else{
 document.getElementById('detail-title').textContent='站点可用性 - '+name+' (24h)';
 document.getElementById('detail-controls').innerHTML='<button id="detail-close" class="btn-close">✕ 关闭</button>';
-document.getElementById('detail-panel').style.display='block';
-document.querySelectorAll('.server-row:not(.site-row),.server-card:not(.site-card)').forEach(function(r){r.classList.remove('selected')});
-document.querySelectorAll('.site-row,.site-card').forEach(function(r){r.classList.toggle('selected',r.dataset.site===name)});
-bindDetailControls();
-refreshSiteDetail(name);
+document.getElementById('detail-close').onclick=closeDetail;
+loadSiteChart(name);
 }
-function toggleServer(name){if(detail&&detail.type==='server'&&detail.name===name)closeDetail();else openServerDetail(name)}
-function toggleSite(name){if(detail&&detail.type==='site'&&detail.name===name)closeDetail();else openSiteDetail(name)}
-async function refreshServerDetail(){
+}
+async function loadServerChart(){
 if(!detail||detail.type!=='server')return;
-var m=document.getElementById('detail-metric').value;
-var h=document.getElementById('detail-hours').value;
+var m=document.getElementById('detail-metric').value,h=document.getElementById('detail-hours').value;
 try{
-var r=await apiFetch('/api/history/'+encodeURIComponent(detail.name)+'?hours='+h);
-if(!r.ok)throw Error('HTTP '+r.status);
-var d=await r.json();
-var labels=d.map(function(x){return new Date(x.timestamp).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
-var values=d.map(function(x){return x[m]||0});
-var ml={cpu_percent:'CPU %',mem_percent:'内存 %',disk_percent:'磁盘 %',net_rx_rate:'入站速率 (bytes/s)',net_tx_rate:'出站速率 (bytes/s)',load_1:'Load 1min'};
+var r=await apiFetch('/api/history/'+encodeURIComponent(detail.name)+'?hours='+h);if(!r.ok)throw 0;
+var d=await r.json(),ml={cpu_percent:'CPU %',mem_percent:'内存 %',disk_percent:'磁盘 %',net_rx_rate:'入站 (B/s)',net_tx_rate:'出站 (B/s)',load_1:'Load 1min'};
 var ctx=document.getElementById('detail-canvas').getContext('2d');
 if(detailChart)detailChart.destroy();
-detailChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:ml[m]||m,data:values,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:20,maxRotation:0},grid:{color:'#1e2130'}},y:{ticks:{color:'#6e7681'},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false}}}});
+detailChart=new Chart(ctx,{type:'line',data:{labels:d.map(function(x){return new Date(x.timestamp).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}),datasets:[{label:ml[m]||m,data:d.map(function(x){return x[m]||0}),borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:20,maxRotation:0},grid:{color:'#1e2130'}},y:{ticks:{color:'#6e7681'},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false}}}});
 }catch(e){console.error(e)}
 }
-async function refreshSiteDetail(name){
+async function loadSiteChart(name){
 try{
-var r=await apiFetch('/api/sites/'+encodeURIComponent(name)+'/history?hours=24');
-if(!r.ok)throw Error('HTTP '+r.status);
-var checks=await r.json();
-var summary=document.getElementById('detail-summary');
-var upN=0,downN=0,sumMs=0;
+var r=await apiFetch('/api/sites/'+encodeURIComponent(name)+'/history?hours=24');if(!r.ok)throw 0;
+var checks=await r.json(),upN=0,downN=0,sumMs=0;
 checks.forEach(function(c){if(c.status==='up'){upN++;if(c.latency_ms>=0)sumMs+=c.latency_ms}else{downN++}});
-var upPct=checks.length?upN/checks.length*100:-1;
-var avgMs=upN?sumMs/upN:-1;
-summary.innerHTML=
-'<div class="scs-item"><div class="scs-label">24h 可用率</div><div class="scs-value '+(upPct>=99?'up':(upPct>=90?'mid':'down'))+'">'+(upPct<0?'--':upPct.toFixed(2)+'%')+'</div></div>'+
+var upPct=checks.length?upN/checks.length*100:-1,avgMs=upN?sumMs/upN:-1;
+document.getElementById('detail-summary').innerHTML=
+'<div class="scs-item"><div class="scs-label">24h 可用率</div><div class="scs-value '+(upPct>=99?'up':upPct>=90?'mid':'down')+'">'+(upPct<0?'--':upPct.toFixed(2)+'%')+'</div></div>'+
 '<div class="scs-item"><div class="scs-label">探测次数</div><div class="scs-value">'+checks.length+'</div></div>'+
 '<div class="scs-item"><div class="scs-label">失败次数</div><div class="scs-value '+(downN?'down':'up')+'">'+downN+'</div></div>'+
 '<div class="scs-item"><div class="scs-label">平均延迟(可用)</div><div class="scs-value">'+(avgMs<0?'--':avgMs.toFixed(0)+' ms')+'</div></div>';
-var hourly={};
-checks.forEach(function(c){
-var d=new Date(c.timestamp);
-var key=d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()+' '+d.getHours()+':00';
-if(!hourly[key])hourly[key]={up:0,total:0};
-hourly[key].total++;if(c.status==='up')hourly[key].up++;
-});
-var keys=Object.keys(hourly);
-var hLabels=keys.map(function(k){var p=k.split(' ');return p[1]});
-var hVals=keys.map(function(k){var b=hourly[k];return b.total?Math.round(b.up/b.total*100):0});
-var hColors=hVals.map(function(v){return v>=99?'#3fb950':(v>=90?'#d29922':'#f85149')});
-var ctx=document.getElementById('detail-canvas').getContext('2d');
-if(detailChart)detailChart.destroy();
-detailChart=new Chart(ctx,{type:'bar',data:{labels:hLabels,datasets:[{label:'每小时可用率 %',data:hVals,backgroundColor:hColors,borderRadius:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:24,maxRotation:45},grid:{display:false}},y:{ticks:{color:'#6e7681',max:100},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false},tooltip:{callbacks:{label:function(cc){return '可用率 '+cc.parsed.y+'%'}}}}}});
+var hourly={};checks.forEach(function(c){var d=new Date(c.timestamp),k=d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()+' '+d.getHours();if(!hourly[k])hourly[k]={u:0,t:0};hourly[k].t++;if(c.status==='up')hourly[k].u++});
+var keys=Object.keys(hourly),hL=keys.map(function(k){return k.split(' ')[1]+':00'}),hV=keys.map(function(k){var b=hourly[k];return b.t?Math.round(b.u/b.t*100):0}),hC=hV.map(function(v){return v>=99?'#3fb950':v>=90?'#d29922':'#f85149'});
+var ctx=document.getElementById('detail-canvas').getContext('2d');if(detailChart)detailChart.destroy();
+detailChart=new Chart(ctx,{type:'bar',data:{labels:hL,datasets:[{label:'每小时可用率 %',data:hV,backgroundColor:hC,borderRadius:2}]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:300},scales:{x:{ticks:{color:'#6e7681',maxTicksLimit:24,maxRotation:45},grid:{display:false}},y:{ticks:{color:'#6e7681',max:100},grid:{color:'#1e2130'},beginAtZero:true}},plugins:{legend:{display:false},tooltip:{callbacks:{label:function(cc){return '可用率 '+cc.parsed.y+'%'}}}}}});
 }catch(e){console.error(e)}
 }
-// ── servers ──
 async function fetchServers(){
-try{
-var r=await apiFetch('/api/servers');if(!r.ok)throw Error('HTTP '+r.status);
-var data=await r.json();
-if(data.gaze){serverRefresh=5000}else{serverRefresh=10000}
+try{var r=await apiFetch('/api/servers');if(!r.ok)throw 0;var d=await r.json();
+if(d.gaze)serverRefresh=5000;else serverRefresh=10000;
 if(serverIntervalId){clearInterval(serverIntervalId);serverIntervalId=setInterval(fetchServers,serverRefresh)}
-renderServers(data.servers||[])
-}catch(e){console.error(e)}
+renderServers(d.servers||[])}catch(e){console.error(e)}
 }
 function renderServers(s){
-var tb=document.getElementById('server-tbody');
-var cards=document.getElementById('server-cards');
+var tb=document.getElementById('server-tbody'),cd=document.getElementById('server-cards');
 document.getElementById('count-online').textContent=s.filter(function(x){return x.status==='online'}).length;
 document.getElementById('count-offline').textContent=s.filter(function(x){return x.status!=='online'}).length;
 document.getElementById('count-total').textContent=s.length;
-if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">暂无服务器数据</td></tr>';cards.innerHTML='';return}
+if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">暂无服务器数据</td></tr>';cd.innerHTML='';return}
 tb.innerHTML=s.map(function(x){
-var sc=x.status==='online'?'online':'offline';
-var off=sc!=='online';
-var bc=function(v){return v>90?'high':v>70?'mid':'low'};
-function bar(v){if(off)return '--';return '<div class="bar-wrap"><div class="bar-fill '+bc(v)+'" style="width:'+Math.min(v,100)+'%"></div></div><span class="bar-value">'+v.toFixed(1)+'%</span>'}
+var o=x.status!=='online',bc=function(v){return v>90?'high':v>70?'mid':'low'};
+function bar(v){if(o)return '--';return '<div class="bar-wrap"><div class="bar-fill '+bc(v)+'" style="width:'+Math.min(v,100)+'%"></div></div><span class="bar-value">'+v.toFixed(1)+'%</span>'}
 return '<tr class="server-row'+(detail&&detail.type==='server'&&detail.name===x.name?' selected':'')+'" data-name="'+esc(x.name)+'">'+
-'<td><span class="status-dot '+sc+'" title="'+x.status+'"></span></td>'+
+'<td><span class="status-dot '+(o?'offline':'online')+'"></span></td>'+
 '<td><strong>'+esc(x.name)+'</strong><br><small>'+esc(x.os_name||'')+'</small></td>'+
-'<td>'+bar(x.cpu_percent)+'</td>'+
-'<td>'+bar(x.mem_percent)+'</td>'+
-'<td>'+bar(x.disk_percent)+'</td>'+
-'<td class="net-rate">'+(off?'--':'<span class="rx">↓ '+fmtRate(x.net_rx_rate)+'</span>')+'</td>'+
-'<td class="net-rate">'+(off?'--':'<span class="tx">↑ '+fmtRate(x.net_tx_rate)+'</span>')+'</td>'+
-'<td>'+(off?'--':x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1))+'</td>'+
-'<td>'+(off?'--':fmtUptime(x.uptime))+'</td><td>'+fmtAgo(x.last_seen)+'</td></tr>';
+'<td>'+bar(x.cpu_percent)+'</td><td>'+bar(x.mem_percent)+'</td><td>'+bar(x.disk_percent)+'</td>'+
+'<td class="net-rate">'+(o?'--':'<span class="rx">↓ '+fmtRate(x.net_rx_rate)+'</span>')+'</td>'+
+'<td class="net-rate">'+(o?'--':'<span class="tx">↑ '+fmtRate(x.net_tx_rate)+'</span>')+'</td>'+
+'<td>'+(o?'--':x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1))+'</td>'+
+'<td>'+(o?'--':fmtUptime(x.uptime))+'</td><td>'+fmtAgo(x.last_seen)+'</td></tr>';
 }).join('');
-cards.innerHTML=s.map(function(x){
-var sc=x.status==='online'?'online':'offline';
-var off=sc!=='online';
-var bc=function(v){return v>90?'high':v>70?'mid':'low'};
-function cbar(v){if(off)return '--';return '<div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(v)+'" style="width:'+Math.min(v,100)+'%"></div></div> '+v.toFixed(1)+'%'}
+cd.innerHTML=s.map(function(x){
+var o=x.status!=='online',bc=function(v){return v>90?'high':v>70?'mid':'low'};
+function cbar(v){if(o)return '--';return '<div class="bar-wrap" style="display:inline-block;vertical-align:middle"><div class="bar-fill '+bc(v)+'" style="width:'+Math.min(v,100)+'%"></div></div> '+v.toFixed(1)+'%'}
 return '<div class="server-card'+(detail&&detail.type==='server'&&detail.name===x.name?' selected':'')+'" data-name="'+esc(x.name)+'">'+
-'<div class="sc-header"><span class="status-dot '+sc+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.os_name||'')+'</div></div></div>'+
-'<div class="sc-grid">'+
-'<div class="sc-item"><span class="sc-label">CPU</span><span>'+cbar(x.cpu_percent)+'</span></div>'+
+'<div class="sc-header"><span class="status-dot '+(o?'offline':'online')+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.os_name||'')+'</div></div></div>'+
+'<div class="sc-grid"><div class="sc-item"><span class="sc-label">CPU</span><span>'+cbar(x.cpu_percent)+'</span></div>'+
 '<div class="sc-item"><span class="sc-label">内存</span><span>'+cbar(x.mem_percent)+'</span></div>'+
 '<div class="sc-item"><span class="sc-label">磁盘</span><span>'+cbar(x.disk_percent)+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">负载</span><span>'+(off?'--':x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1))+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">网络 ↓</span><span class="sc-net rx">'+(off?'--':fmtRate(x.net_rx_rate))+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">网络 ↑</span><span class="sc-net tx">'+(off?'--':fmtRate(x.net_tx_rate))+'</span></div>'+
-'</div>'+
-'<div class="sc-footer"><span>'+(off?'--':'在线 '+fmtUptime(x.uptime))+'</span><span>'+fmtAgo(x.last_seen)+'</span></div>'+
-'</div>';
+'<div class="sc-item"><span class="sc-label">负载</span><span>'+(o?'--':x.load_1.toFixed(1)+' / '+x.load_5.toFixed(1)+' / '+x.load_15.toFixed(1))+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">网络 ↓</span><span class="sc-net rx">'+(o?'--':fmtRate(x.net_rx_rate))+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">网络 ↑</span><span class="sc-net tx">'+(o?'--':fmtRate(x.net_tx_rate))+'</span></div></div>'+
+'<div class="sc-footer"><span>'+(o?'--':'在线 '+fmtUptime(x.uptime))+'</span><span>'+fmtAgo(x.last_seen)+'</span></div></div>';
 }).join('');
-var rows=document.querySelectorAll('.server-row');
-var cardEls=document.querySelectorAll('.server-card');
-rows.forEach(function(r){r.addEventListener('click',function(){toggleServer(r.dataset.name)})});
-cardEls.forEach(function(c){c.addEventListener('click',function(){toggleServer(c.dataset.name)})});
 }
-// ── sites ──
 async function fetchSites(){
-try{
-var r=await apiFetch('/api/sites');if(!r.ok)throw Error('HTTP '+r.status);
-renderSites((await r.json()).sites||[]);
-}catch(e){console.error(e)}
-}
-function siteStatusClass(st){return st==='up'?'online':(st==='down'?'offline':'unknown')}
-function latencyTxt(x){
-if(typeof x.latency_ms!=='number'||x.latency_ms<0)return '--';
-if(x.latency_ms<1000)return x.latency_ms.toFixed(0)+' ms';
-return (x.latency_ms/1000).toFixed(2)+' s';
-}
-function uptimeTxt(x){
-if(typeof x.uptime_24h!=='number'||x.uptime_24h<0)return '--';
-return x.uptime_24h.toFixed(2)+'%';
+try{var r=await apiFetch('/api/sites');if(!r.ok)throw 0;renderSites((await r.json()).sites||[])}catch(e){console.error(e)}
 }
 function renderSites(s){
 document.getElementById('count-sites-up').textContent=s.filter(function(x){return x.status==='up'}).length;
 document.getElementById('count-sites-down').textContent=s.filter(function(x){return x.status!=='up'&&x.status!=='unknown'}).length;
-var hint=document.getElementById('sites-hint');
-if(!s.length){hint.textContent='未配置站点（在 server.yml 中添加 sites 段）';}
-else{hint.textContent='每站点独立探测间隔，默认 60s'}
-var tb=document.getElementById('sites-tbody');
-var cards=document.getElementById('sites-cards');
-if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="7">未配置站点监控</td></tr>';cards.innerHTML='';return}
-function row(x){
-var sc=siteStatusClass(x.status);
-var codeTxt=x.status_code>0?x.status_code:'--';
-var httpCls=(x.status_code>=200&&x.status_code<400)?'online':'offline';
-var upCls=(x.uptime_24h>=99)?'online':(x.uptime_24h>=90?'mid':'offline');
-return '<tr class="server-row site-row'+(detail&&detail.type==='site'&&detail.name===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
-'<td><span class="status-dot '+sc+'" title="'+esc(x.status)+'"></span></td>'+
-'<td><strong>'+esc(x.name)+'</strong></td>'+
+document.getElementById('sites-hint').textContent=s.length?'每站点独立探测间隔，默认 60s':'未配置站点（在 server.yml 中添加 sites 段）';
+var tb=document.getElementById('sites-tbody'),cd=document.getElementById('sites-cards');
+if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="7">未配置站点监控</td></tr>';cd.innerHTML='';return}
+tb.innerHTML=s.map(function(x){
+var sc=x.status==='up'?'online':x.status==='down'?'offline':'unknown';
+var up=x.uptime_24h>=99?'online':x.uptime_24h>=90?'mid':'offline';
+return '<tr class="site-row'+(detail&&detail.type==='site'&&detail.name===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
+'<td><span class="status-dot '+sc+'"></span></td><td><strong>'+esc(x.name)+'</strong></td>'+
 '<td style="white-space:normal;word-break:break-all;max-width:340px"><small>'+esc(x.url)+'</small></td>'+
-'<td><span class="'+httpCls+'">'+codeTxt+'</span></td>'+
-'<td>'+latencyTxt(x)+'</td>'+
-'<td class="'+upCls+'">'+uptimeTxt(x)+'</td>'+
-'<td>'+fmtAgo(x.last_check)+'</td></tr>';
-}
-tb.innerHTML=s.map(row).join('');
-cards.innerHTML=s.map(function(x){
-var sc=siteStatusClass(x.status);
-var upCls=(x.uptime_24h>=99)?'online':(x.uptime_24h>=90?'mid':'offline');
+'<td><span class="'+(x.status_code>=200&&x.status_code<400?'online':'offline')+'">'+(x.status_code>0?x.status_code:'--')+'</span></td>'+
+'<td>'+latencyTxt(x)+'</td><td class="'+up+'">'+uptimeTxt(x)+'</td><td>'+fmtAgo(x.last_check)+'</td></tr>';
+}).join('');
+cd.innerHTML=s.map(function(x){
+var sc=x.status==='up'?'online':x.status==='down'?'offline':'unknown';
+var up=x.uptime_24h>=99?'online':x.uptime_24h>=90?'mid':'offline';
 return '<div class="server-card site-card'+(detail&&detail.type==='site'&&detail.name===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
 '<div class="sc-header"><span class="status-dot '+sc+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.url)+'</div></div></div>'+
-'<div class="sc-grid">'+
-'<div class="sc-item"><span class="sc-label">HTTP</span><span>'+(x.status_code>0?x.status_code:'--')+'</span></div>'+
+'<div class="sc-grid"><div class="sc-item"><span class="sc-label">HTTP</span><span>'+(x.status_code>0?x.status_code:'--')+'</span></div>'+
 '<div class="sc-item"><span class="sc-label">延迟</span><span>'+latencyTxt(x)+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">24h可用率</span><span class="'+upCls+'">'+uptimeTxt(x)+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">最后检查</span><span>'+fmtAgo(x.last_check)+'</span></div>'+
-'</div></div>';
+'<div class="sc-item"><span class="sc-label">24h可用率</span><span class="'+up+'">'+uptimeTxt(x)+'</span></div>'+
+'<div class="sc-item"><span class="sc-label">最后检查</span><span>'+fmtAgo(x.last_check)+'</span></div></div></div>';
 }).join('');
-var rows=document.querySelectorAll('.site-row');
-var cardEls=document.querySelectorAll('.site-card');
-rows.forEach(function(r){r.addEventListener('click',function(){toggleSite(r.dataset.site)})});
-cardEls.forEach(function(c){c.addEventListener('click',function(){toggleSite(c.dataset.site)})});
 }
-// ── alerts ──
-async function fetchAlerts(){
-try{var r=await apiFetch('/api/alerts');if(!r.ok)throw Error('HTTP '+r.status);renderAlerts(await r.json())}catch(e){console.error(e)}
-}
-function parseAlertTime(t){
-if(!t)return NaN;
-if(t.indexOf('T')<0)t=t.replace(' ','T')+'Z';
-var d=new Date(t);
-return isNaN(d.getTime())?NaN:d.getTime();
-}
+function latencyTxt(x){if(typeof x.latency_ms!=='number'||x.latency_ms<0)return '--';return x.latency_ms<1000?x.latency_ms.toFixed(0)+' ms':(x.latency_ms/1000).toFixed(2)+' s'}
+function uptimeTxt(x){return typeof x.uptime_24h==='number'&&x.uptime_24h>=0?x.uptime_24h.toFixed(2)+'%':'--'}
+async function fetchAlerts(){try{var r=await apiFetch('/api/alerts');if(!r.ok)throw 0;renderAlerts(await r.json())}catch(e){console.error(e)}}
 function renderAlerts(a){
-var c=document.getElementById('alert-list');
-var dayAgo=Date.now()-86400000;
-document.getElementById('count-alerts').textContent=a.filter(function(x){return parseAlertTime(x.sent_at)>dayAgo}).length;
+var c=document.getElementById('alert-list'),day=Date.now()-86400000;
+document.getElementById('count-alerts').textContent=a.filter(function(x){return pt(x.sent_at)>day}).length;
 if(!a.length){c.innerHTML='<div class="alert-item" style="color:var(--text-dim)">暂无告警</div>';return}
 c.innerHTML=a.slice(0,20).map(function(x){
 var tc=x.type==='traffic_rx'||x.type==='traffic_tx'?'traffic_rx':x.type;
 return '<div class="alert-item"><span class="alert-type '+tc+'">'+x.type+'</span><span>'+esc(x.message)+'</span><span class="alert-time">'+fmtAgo(x.sent_at)+'</span></div>';
 }).join('');
 }
-function fmtRate(b){
-if(!b||b<0)return '0 B/s';
-var u=['B/s','KB/s','MB/s','GB/s'],v=b,i=0;
-while(v>=1000&&i<u.length-1){v/=1000;i++}
-return v.toFixed(1)+' '+u[i];
-}
-function fmtUptime(s){
-if(!s||s<0)return '--';
-var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);
-if(d>0)return d+'d '+h+'h';if(h>0)return h+'h '+m+'m';return m+'m';
-}
-function fmtAgo(t){
-if(!t)return '--';
-var d=new Date(t);
-if(isNaN(d.getTime()))return '--';
-var s=Math.floor((Date.now()-d.getTime())/1000);
-if(s<5)return '刚刚';if(s<60)return s+'秒前';if(s<3600)return Math.floor(s/60)+'分钟前';if(s<86400)return Math.floor(s/3600)+'小时前';return Math.floor(s/86400)+'天前';
-}
+function pt(t){if(!t)return NaN;if(t.indexOf('T')<0)t=t.replace(' ','T')+'Z';var d=new Date(t);return isNaN(d.getTime())?NaN:d.getTime()}
+function fmtRate(b){if(!b||b<0)return '0 B/s';var u=['B/s','KB/s','MB/s','GB/s'],v=b,i=0;while(v>=1000&&i<u.length-1){v/=1000;i++}return v.toFixed(1)+' '+u[i]}
+function fmtUptime(s){if(!s||s<0)return '--';var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d>0?d+'d '+h+'h':h>0?h+'h '+m+'m':m+'m'}
+function fmtAgo(t){if(!t)return '--';var d=new Date(t);if(isNaN(d.getTime()))return '--';var s=Math.floor((Date.now()-d.getTime())/1000);return s<5?'刚刚':s<60?s+'秒前':s<3600?Math.floor(s/60)+'分钟前':s<86400?Math.floor(s/3600)+'小时前':Math.floor(s/86400)+'天前'}
 function esc(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+document.addEventListener('DOMContentLoaded',function(){
+document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN');
+setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')},1000);
+fetchServers();serverIntervalId=setInterval(fetchServers,serverRefresh);
+fetchSites();setInterval(fetchSites,30000);
+fetchAlerts();setInterval(fetchAlerts,30000);
+document.getElementById('detail-close').onclick=closeDetail;
+document.getElementById('server-tbody').onclick=function(e){var r=e.target.closest('[data-name]');if(r)openDetail('server',r.dataset.name)};
+document.getElementById('server-cards').onclick=function(e){var r=e.target.closest('[data-name]');if(r)openDetail('server',r.dataset.name)};
+document.getElementById('sites-tbody').onclick=function(e){var r=e.target.closest('[data-site]');if(r)openDetail('site',r.dataset.site)};
+document.getElementById('sites-cards').onclick=function(e){var r=e.target.closest('[data-site]');if(r)openDetail('site',r.dataset.site)};
+});
 })();
 </script>
 </body>

@@ -142,7 +142,7 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-panel" id="detail-panel" style="display:none">
 <div class="chart-header">
 <h3 id="detail-title"></h3>
-<div class="chart-controls" id="detail-controls"></div>
+<div class="chart-controls"><button id="detail-close" class="btn-close">✕ 关闭</button></div>
 </div>
 <div class="site-chart-summary" id="detail-summary"></div>
 <div class="chart-wrap"><canvas id="detail-canvas"></canvas></div>
@@ -171,15 +171,13 @@ document.querySelectorAll('[data-name="'+name+'"],[data-site="'+name+'"]').forEa
 document.getElementById('detail-panel').style.display='block';
 if(type==='server'){
 document.getElementById('detail-title').textContent='历史趋势 - '+name;
-document.getElementById('detail-controls').innerHTML='<select id="detail-metric"><option value="cpu_percent">CPU</option><option value="mem_percent">内存</option><option value="disk_percent">磁盘</option><option value="net_rx_rate">网络入站</option><option value="net_tx_rate">网络出站</option><option value="load_1">负载 1min</option></select><select id="detail-hours"><option value="1">1小时</option><option value="6">6小时</option><option value="24" selected>24小时</option><option value="72">72小时</option></select>';
-document.getElementById('detail-summary').innerHTML='';
+document.getElementById('detail-summary').innerHTML='<select id="detail-metric"><option value="cpu_percent">CPU</option><option value="mem_percent">内存</option><option value="disk_percent">磁盘</option><option value="net_rx_rate">网络入站</option><option value="net_tx_rate">网络出站</option><option value="load_1">负载 1min</option></select><select id="detail-hours"><option value="1">1小时</option><option value="6">6小时</option><option value="24" selected>24小时</option><option value="72">72小时</option></select>';
 document.getElementById('detail-metric').onchange=loadServerChart;
 document.getElementById('detail-hours').onchange=loadServerChart;
 loadServerChart();
 }else{
 document.getElementById('detail-title').textContent='站点可用性 - '+name+' (24h)';
-document.getElementById('detail-controls').innerHTML='<button id="detail-close" class="btn-close">✕ 关闭</button>';
-document.getElementById('detail-close').onclick=closeDetail;
+document.getElementById('detail-summary').innerHTML='';
 loadSiteChart(name);
 }
 }

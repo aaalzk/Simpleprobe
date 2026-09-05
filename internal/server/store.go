@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -72,6 +73,7 @@ type SiteRecord struct {
 	StatusCode int       `json:"status_code"` // 0 if network error / timeout
 	LatencyMs  float64   `json:"latency_ms"`  // -1 if network error / timeout
 	Error      string    `json:"error"`
+	StatusText string    `json:"status_text"` // human-readable status: "正常 — 23ms", "HTTP 502", "连接超时", etc.
 	LastCheck  time.Time `json:"last_check"`
 	Uptime24h  float64   `json:"uptime_24h"` // percentage 0-100, -1 if no data
 	Checks24h  int       `json:"checks_24h"`
@@ -179,6 +181,12 @@ func (s *Store) migrate() error {
 			latency_ms  REAL NOT NULL DEFAULT -1,
 			error       TEXT NOT NULL DEFAULT '',
 			last_check  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS alert_tolerance (
+			server_name TEXT NOT NULL,
+			alert_type  TEXT NOT NULL,
+			consecutive INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (server_name, alert_type)
 		)`,
 	}
 	for _, q := range queries {
@@ -433,6 +441,7 @@ func (s *Store) GetAllSiteStates() ([]SiteRecord, error) {
 		sites[i].Uptime24h = uptime
 		sites[i].Checks24h = total
 		sites[i].Downs24h = downs
+		sites[i].StatusText = BuildStatusText(sites[i].Status, sites[i].StatusCode, sites[i].LatencyMs, sites[i].Error)
 	}
 	return sites, nil
 }
@@ -541,4 +550,75 @@ func (s *Store) CleanupOldReports(retentionHours int) error {
 	cutoff := time.Now().UTC().Add(-time.Duration(retentionHours) * time.Hour)
 	_, err := s.db.Exec(`DELETE FROM reports WHERE timestamp < ?`, cutoff)
 	return err
+}
+
+// IncrementAlertTolerance bumps the consecutive counter for (server, alertType)
+// and returns the new count.
+func (s *Store) IncrementAlertTolerance(serverName, alertType string) (int, error) {
+	query := `INSERT INTO alert_tolerance (server_name, alert_type, consecutive)
+		VALUES (?, ?, 1)
+		ON CONFLICT(server_name, alert_type) DO UPDATE SET consecutive = consecutive + 1`
+	_, err := s.db.Exec(query, serverName, alertType)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = s.db.QueryRow(`SELECT consecutive FROM alert_tolerance WHERE server_name = ? AND alert_type = ?`,
+		serverName, alertType).Scan(&n)
+	return n, err
+}
+
+// ResetAlertTolerance sets the consecutive counter back to 0.
+func (s *Store) ResetAlertTolerance(serverName, alertType string) error {
+	query := `INSERT INTO alert_tolerance (server_name, alert_type, consecutive)
+		VALUES (?, ?, 0)
+		ON CONFLICT(server_name, alert_type) DO UPDATE SET consecutive = 0`
+	_, err := s.db.Exec(query, serverName, alertType)
+	return err
+}
+
+// GetAlertToleranceCount returns the current consecutive count, 0 if no record.
+func (s *Store) GetAlertToleranceCount(serverName, alertType string) int {
+	var n int
+	err := s.db.QueryRow(`SELECT consecutive FROM alert_tolerance WHERE server_name = ? AND alert_type = ?`,
+		serverName, alertType).Scan(&n)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// BuildStatusText generates a human-readable status string for a site probe result.
+func BuildStatusText(status string, statusCode int, latencyMs float64, errMsg string) string {
+	if status == "up" {
+		if latencyMs < 1000 {
+			return fmt.Sprintf("正常 — %.0fms", latencyMs)
+		}
+		return fmt.Sprintf("正常 — %.2fs", latencyMs/1000)
+	}
+	// status == "down"
+	if statusCode > 0 {
+		return fmt.Sprintf("HTTP %d", statusCode)
+	}
+	// Network error — extract short description
+	if strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "context deadline") {
+		return "连接超时"
+	}
+	if strings.Contains(errMsg, "connection refused") {
+		return "连接拒绝"
+	}
+	if strings.Contains(errMsg, "no such host") {
+		return "DNS 失败"
+	}
+	if strings.Contains(errMsg, "x509") || strings.Contains(errMsg, "certificate") {
+		return "证书错误"
+	}
+	if errMsg != "" {
+		// Truncate long error messages
+		if len(errMsg) > 40 {
+			return errMsg[:37] + "..."
+		}
+		return errMsg
+	}
+	return "不可达"
 }

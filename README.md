@@ -56,6 +56,13 @@ alerts:
   traffic_rx_mbps: 800
   traffic_tx_mbps: 800
   cooldown_seconds: 300
+  tolerance:                     # 连续触发次数才发出告警（各类型独立）
+    offline: 3
+    cpu: 3
+    traffic_rx: 3
+    traffic_tx: 3
+    site_down: 3
+    site_up: 3
 
 gaze:
   enabled: true
@@ -299,15 +306,30 @@ make build-server
 
 ## 告警类型
 
-| 类型 | 触发条件 | 冷却 |
-|------|---------|------|
-| `offline` | 连续 N 秒无上报 | 可配置 |
-| `online` | 重新上线时 | 同 offline |
-| `cpu` | CPU > 阈值 | 可配置 |
-| `traffic_rx` | 入站流量 > 阈值 | 可配置 |
-| `traffic_tx` | 出站流量 > 阈值 | 可配置 |
-| `site_down` | 站点探测失败（网络错误/超时/HTTP ≥ 400） | 同 offline |
-| `site_up` | 站点恢复可用时 | 同 site_down |
+| 类型 | 触发条件 | 冷却 | 容忍度 |
+|------|---------|------|--------|
+| `offline` | 连续 N 秒无上报 | 可配置 | 默认 3 次 |
+| `online` | 重新上线时 | 同 offline | 默认 3 次 |
+| `cpu` | CPU > 阈值 | 可配置 | 默认 3 次 |
+| `traffic_rx` | 入站流量 > 阈值 | 可配置 | 默认 3 次 |
+| `traffic_tx` | 出站流量 > 阈值 | 可配置 | 默认 3 次 |
+| `site_down` | 站点探测失败（网络错误/超时/HTTP ≥ 400） | 同 offline | 默认 3 次 |
+| `site_up` | 站点恢复可用时 | 同 site_down | 默认 3 次 |
+
+### 告警容忍度
+
+每种告警类型独立配置容忍度（连续触发次数）。例如默认容忍度为 3 时，服务器需要连续 3 次检测都超过 CPU 阈值才会发出告警，避免因瞬间抖动触发误报。当条件恢复正常时，计数器自动重置。
+
+```yaml
+alerts:
+  tolerance:
+    offline: 3       # 离线告警：连续 3 次检测离线才告警
+    cpu: 3           # CPU 告警：连续 3 次超阈值才告警
+    traffic_rx: 3    # 入站流量告警
+    traffic_tx: 3    # 出站流量告警
+    site_down: 3     # 站点不可用告警
+    site_up: 3       # 站点恢复告警
+```
 
 ### 站点可用性监控
 
@@ -318,8 +340,7 @@ Server 会按 `sites` 配置对每个站点发起 HTTP(S) GET 请求（等价于
 - 网络错误、超时、或最终状态码 `≥ 400` → `down`（不可用）
 - 站点从 `up` 变 `down` 触发 `site_down` 告警，恢复触发 `site_up` 告警
 
-Dashboard 的「站点可用性」区块展示每个站点的当前状态、HTTP 状态码、延迟、
-24 小时可用率；点击站点可查看 24 小时逐小时可用率图表。
+Dashboard 的「站点可用性」区块展示每个站点的当前状态与 24 小时可用率，探测状态列显示可读信息（如 "正常 — 23ms"、"HTTP 502"、"连接超时"、"DNS 失败" 等）；点击站点可查看 24 小时逐小时可用率图表。
 
 相关 API：
 

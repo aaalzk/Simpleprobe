@@ -32,13 +32,24 @@ type GotifyConfig struct {
 	Token string `yaml:"token"`
 }
 
+// AlertTolerance holds per-type tolerance (consecutive triggers before alerting).
+type AlertTolerance struct {
+	Offline   int `yaml:"offline"`
+	CPU       int `yaml:"cpu"`
+	TrafficRx int `yaml:"traffic_rx"`
+	TrafficTx int `yaml:"traffic_tx"`
+	SiteDown  int `yaml:"site_down"`
+	SiteUp    int `yaml:"site_up"`
+}
+
 // AlertConfig holds alert thresholds and cooldown settings.
 type AlertConfig struct {
-	OfflineSeconds  int     `yaml:"offline_seconds"`
-	CPUThreshold    float64 `yaml:"cpu_threshold"`
-	TrafficRxMbps   float64 `yaml:"traffic_rx_mbps"`
-	TrafficTxMbps   float64 `yaml:"traffic_tx_mbps"`
-	CooldownSeconds int     `yaml:"cooldown_seconds"`
+	OfflineSeconds  int            `yaml:"offline_seconds"`
+	CPUThreshold    float64        `yaml:"cpu_threshold"`
+	TrafficRxMbps   float64        `yaml:"traffic_rx_mbps"`
+	TrafficTxMbps   float64        `yaml:"traffic_tx_mbps"`
+	CooldownSeconds int            `yaml:"cooldown_seconds"`
+	Tolerance       AlertTolerance `yaml:"tolerance"`
 }
 
 // GazeConfig holds gaze mode settings.
@@ -57,6 +68,37 @@ type AgentConfig struct {
 	Interval  int    `yaml:"interval"`
 }
 
+// GetTolerance returns the tolerance for the given alert type.
+func (c *AlertConfig) GetTolerance(alertType string) int {
+	switch alertType {
+	case "offline":
+		if c.Tolerance.Offline > 0 {
+			return c.Tolerance.Offline
+		}
+	case "cpu":
+		if c.Tolerance.CPU > 0 {
+			return c.Tolerance.CPU
+		}
+	case "traffic_rx":
+		if c.Tolerance.TrafficRx > 0 {
+			return c.Tolerance.TrafficRx
+		}
+	case "traffic_tx":
+		if c.Tolerance.TrafficTx > 0 {
+			return c.Tolerance.TrafficTx
+		}
+	case "site_down":
+		if c.Tolerance.SiteDown > 0 {
+			return c.Tolerance.SiteDown
+		}
+	case "site_up":
+		if c.Tolerance.SiteUp > 0 {
+			return c.Tolerance.SiteUp
+		}
+	}
+	return 3 // fallback default
+}
+
 // DefaultServerConfig returns a ServerConfig with sensible defaults.
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
@@ -70,6 +112,14 @@ func DefaultServerConfig() ServerConfig {
 			TrafficRxMbps:   800,
 			TrafficTxMbps:   800,
 			CooldownSeconds: 300,
+			Tolerance: AlertTolerance{
+				Offline:   3,
+				CPU:       3,
+				TrafficRx: 3,
+				TrafficTx: 3,
+				SiteDown:  3,
+				SiteUp:    3,
+			},
 		},
 		Gaze: GazeConfig{
 			Enabled:       true,

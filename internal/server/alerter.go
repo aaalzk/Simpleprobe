@@ -51,10 +51,20 @@ func (a *Alerter) scanOffline() {
 		return
 	}
 	for _, name := range offlineNames {
+		// Tolerance: count consecutive offline detections
+		count, err := a.store.IncrementAlertTolerance(name, "offline")
+		if err != nil {
+			log.Printf("ERROR: increment tolerance offline %s: %v", name, err)
+			continue
+		}
+		tolerance := a.cfg.GetTolerance("offline")
+		if count < tolerance {
+			continue
+		}
 		if a.store.CheckAlertCooldown(name, "offline", a.cfg.CooldownSeconds) {
 			continue
 		}
-		msg := fmt.Sprintf("服务器 %s 已离线", name)
+		msg := fmt.Sprintf("服务器 %s 已离线 (连续 %d 次检测)", name, count)
 		a.sendAlert(name, "offline", msg, msg)
 	}
 }
@@ -62,11 +72,23 @@ func (a *Alerter) scanOffline() {
 // SendRecoveryAlert sends a recovery notification when a previously offline
 // server comes back online. Called by the API handler before upserting.
 func (a *Alerter) SendRecoveryAlert(name string) {
-	// Check cooldown to avoid flooding recovery alerts
+	// Reset offline tolerance counter since server is back
+	a.store.ResetAlertTolerance(name, "offline")
+
+	// Tolerance for recovery
+	count, err := a.store.IncrementAlertTolerance(name, "online")
+	if err != nil {
+		log.Printf("ERROR: increment tolerance online %s: %v", name, err)
+		return
+	}
+	tolerance := a.cfg.GetTolerance("online")
+	if count < tolerance {
+		return
+	}
 	if a.store.CheckAlertCooldown(name, "online", a.cfg.CooldownSeconds) {
 		return
 	}
-	msg := fmt.Sprintf("服务器 %s 已恢复上线", name)
+	msg := fmt.Sprintf("服务器 %s 已恢复上线 (连续 %d 次检测)", name, count)
 	a.sendAlert(name, "online", msg, msg)
 }
 
@@ -75,18 +97,23 @@ func (a *Alerter) SendRecoveryAlert(name string) {
 func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64, topCPUProcs []agent.ProcInfo) {
 	// Check CPU threshold
 	if cpuPct > a.cfg.CPUThreshold {
-		if !a.store.CheckAlertCooldown(name, "cpu", a.cfg.CooldownSeconds) {
-			shortMsg := fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%)", name, cpuPct, a.cfg.CPUThreshold)
-			var fullMsg strings.Builder
-			fullMsg.WriteString(shortMsg)
-			if len(topCPUProcs) > 0 {
-				fullMsg.WriteString("\n\n")
-				for i, p := range topCPUProcs {
-					fullMsg.WriteString(fmt.Sprintf("  %d. %s (PID: %d) %.1f%%\n", i+1, p.Name, p.PID, p.CPUPercent))
+		count, err := a.store.IncrementAlertTolerance(name, "cpu")
+		if err == nil && count >= a.cfg.GetTolerance("cpu") {
+			if !a.store.CheckAlertCooldown(name, "cpu", a.cfg.CooldownSeconds) {
+				shortMsg := fmt.Sprintf("服务器 %s CPU 使用率过高: %.1f%% (阈值: %.0f%%, 连续 %d 次)", name, cpuPct, a.cfg.CPUThreshold, count)
+				var fullMsg strings.Builder
+				fullMsg.WriteString(shortMsg)
+				if len(topCPUProcs) > 0 {
+					fullMsg.WriteString("\n\n")
+					for i, p := range topCPUProcs {
+						fullMsg.WriteString(fmt.Sprintf("  %d. %s (PID: %d) %.1f%%\n", i+1, p.Name, p.PID, p.CPUPercent))
+					}
 				}
+				a.sendAlert(name, "cpu", shortMsg, fullMsg.String())
 			}
-			a.sendAlert(name, "cpu", shortMsg, fullMsg.String())
 		}
+	} else {
+		a.store.ResetAlertTolerance(name, "cpu")
 	}
 
 	// Check traffic thresholds (bytes/s to Mbps)
@@ -94,17 +121,27 @@ func (a *Alerter) CheckServer(name string, cpuPct, netRxRate, netTxRate float64,
 	txMbps := (netTxRate * 8) / 1_000_000
 
 	if rxMbps > a.cfg.TrafficRxMbps {
-		if !a.store.CheckAlertCooldown(name, "traffic_rx", a.cfg.CooldownSeconds) {
-			msg := fmt.Sprintf("服务器 %s 入站流量异常: %.1f Mbps (阈值: %.0f Mbps)", name, rxMbps, a.cfg.TrafficRxMbps)
-			a.sendAlert(name, "traffic_rx", msg, msg)
+		count, err := a.store.IncrementAlertTolerance(name, "traffic_rx")
+		if err == nil && count >= a.cfg.GetTolerance("traffic_rx") {
+			if !a.store.CheckAlertCooldown(name, "traffic_rx", a.cfg.CooldownSeconds) {
+				msg := fmt.Sprintf("服务器 %s 入站流量异常: %.1f Mbps (阈值: %.0f Mbps, 连续 %d 次)", name, rxMbps, a.cfg.TrafficRxMbps, count)
+				a.sendAlert(name, "traffic_rx", msg, msg)
+			}
 		}
+	} else {
+		a.store.ResetAlertTolerance(name, "traffic_rx")
 	}
 
 	if txMbps > a.cfg.TrafficTxMbps {
-		if !a.store.CheckAlertCooldown(name, "traffic_tx", a.cfg.CooldownSeconds) {
-			msg := fmt.Sprintf("服务器 %s 出站流量异常: %.1f Mbps (阈值: %.0f Mbps)", name, txMbps, a.cfg.TrafficTxMbps)
-			a.sendAlert(name, "traffic_tx", msg, msg)
+		count, err := a.store.IncrementAlertTolerance(name, "traffic_tx")
+		if err == nil && count >= a.cfg.GetTolerance("traffic_tx") {
+			if !a.store.CheckAlertCooldown(name, "traffic_tx", a.cfg.CooldownSeconds) {
+				msg := fmt.Sprintf("服务器 %s 出站流量异常: %.1f Mbps (阈值: %.0f Mbps, 连续 %d 次)", name, txMbps, a.cfg.TrafficTxMbps, count)
+				a.sendAlert(name, "traffic_tx", msg, msg)
+			}
 		}
+	} else {
+		a.store.ResetAlertTolerance(name, "traffic_tx")
 	}
 }
 

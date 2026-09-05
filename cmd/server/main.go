@@ -76,7 +76,7 @@ func main() {
 	alerter.Start()
 
 	// Start site availability monitor
-	siteMonitor := server.NewSiteMonitor(store, alerter, cfg.Sites, cfg.Alerts.CooldownSeconds)
+	siteMonitor := server.NewSiteMonitor(store, alerter, cfg.Sites, cfg.Alerts)
 	siteMonitor.Start()
 
 	// Set up rate limiter alert callback

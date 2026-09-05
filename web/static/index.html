@@ -133,8 +133,8 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 </div>
 <div class="table-wrapper sites-tbl">
 <table id="sites-table">
-<thead><tr><th>状态</th><th>名称</th><th>URL</th><th>HTTP</th><th>延迟</th><th>24h 可用率</th><th>最后检查</th></tr></thead>
-<tbody id="sites-tbody"><tr class="empty-row"><td colspan="7">等待数据...</td></tr></tbody>
+<thead><tr><th>状态</th><th>名称</th><th>URL</th><th>探测状态</th><th>24h 可用率</th><th>最后检查</th></tr></thead>
+<tbody id="sites-tbody"><tr class="empty-row"><td colspan="6">等待数据...</td></tr></tbody>
 </table>
 </div>
 <div class="server-cards" id="sites-cards"></div>
@@ -148,7 +148,7 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-wrap"><canvas id="detail-canvas"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
-<footer>Simpleprobe v1.3.4 · 刷新间隔 10s</footer>
+<footer>Simpleprobe v1.4.0 · 刷新间隔 10s</footer>
 </div>
 <script>
 (function(){
@@ -255,28 +255,28 @@ document.getElementById('count-sites-up').textContent=s.filter(function(x){retur
 document.getElementById('count-sites-down').textContent=s.filter(function(x){return x.status!=='up'&&x.status!=='unknown'}).length;
 document.getElementById('sites-hint').textContent=s.length?'每站点独立探测间隔，默认 60s':'未配置站点（在 server.yml 中添加 sites 段）';
 var tb=document.getElementById('sites-tbody'),cd=document.getElementById('sites-cards');
-if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="7">未配置站点监控</td></tr>';cd.innerHTML='';return}
+if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="6">未配置站点监控</td></tr>';cd.innerHTML='';return}
 tb.innerHTML=s.map(function(x){
 var sc=x.status==='up'?'online':x.status==='down'?'offline':'unknown';
 var up=x.uptime_24h>=99?'online':x.uptime_24h>=90?'mid':'offline';
+var st=x.status_text||'--';
 return '<tr class="site-row'+(detail&&detail.type==='site'&&detail.name===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
 '<td><span class="status-dot '+sc+'"></span></td><td><strong>'+esc(x.name)+'</strong></td>'+
 '<td style="white-space:normal;word-break:break-all;max-width:340px"><small>'+esc(x.url)+'</small></td>'+
-'<td><span class="'+(x.status_code>=200&&x.status_code<400?'online':'offline')+'">'+(x.status_code>0?x.status_code:'--')+'</span></td>'+
-'<td>'+latencyTxt(x)+'</td><td class="'+up+'">'+uptimeTxt(x)+'</td><td>'+fmtAgo(x.last_check)+'</td></tr>';
+'<td><span class="'+(x.status==='up'?'online':'offline')+'">'+esc(st)+'</span></td>'+
+'<td class="'+up+'">'+uptimeTxt(x)+'</td><td>'+fmtAgo(x.last_check)+'</td></tr>';
 }).join('');
 cd.innerHTML=s.map(function(x){
 var sc=x.status==='up'?'online':x.status==='down'?'offline':'unknown';
 var up=x.uptime_24h>=99?'online':x.uptime_24h>=90?'mid':'offline';
+var st=x.status_text||'--';
 return '<div class="server-card site-card'+(detail&&detail.type==='site'&&detail.name===x.name?' selected':'')+'" data-site="'+esc(x.name)+'">'+
 '<div class="sc-header"><span class="status-dot '+sc+'"></span><div><div class="sc-name">'+esc(x.name)+'</div><div class="sc-os">'+esc(x.url)+'</div></div></div>'+
-'<div class="sc-grid"><div class="sc-item"><span class="sc-label">HTTP</span><span>'+(x.status_code>0?x.status_code:'--')+'</span></div>'+
-'<div class="sc-item"><span class="sc-label">延迟</span><span>'+latencyTxt(x)+'</span></div>'+
+'<div class="sc-grid"><div class="sc-item"><span class="sc-label">状态</span><span class="'+(x.status==='up'?'online':'offline')+'">'+esc(st)+'</span></div>'+
 '<div class="sc-item"><span class="sc-label">24h可用率</span><span class="'+up+'">'+uptimeTxt(x)+'</span></div>'+
 '<div class="sc-item"><span class="sc-label">最后检查</span><span>'+fmtAgo(x.last_check)+'</span></div></div></div>';
 }).join('');
 }
-function latencyTxt(x){if(typeof x.latency_ms!=='number'||x.latency_ms<0)return '--';return x.latency_ms<1000?x.latency_ms.toFixed(0)+' ms':(x.latency_ms/1000).toFixed(2)+' s'}
 function uptimeTxt(x){return typeof x.uptime_24h==='number'&&x.uptime_24h>=0?x.uptime_24h.toFixed(2)+'%':'--'}
 async function fetchAlerts(){try{var r=await apiFetch('/api/alerts');if(!r.ok)throw 0;renderAlerts(await r.json())}catch(e){console.error(e)}}
 function renderAlerts(a){

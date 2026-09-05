@@ -22,19 +22,19 @@ type SiteMonitor struct {
 	store     *Store
 	alerter   *Alerter
 	sites     []config.SiteConfig
-	cooldown  int // alert cooldown seconds, from alert config
+	alertCfg  config.AlertConfig
 	transport *http.Transport
 	stopCh    chan struct{}
 }
 
-// NewSiteMonitor creates a site monitor. cooldown is the alert cooldown in
-// seconds (reuse the alert.cooldown_seconds setting).
-func NewSiteMonitor(store *Store, alerter *Alerter, sites []config.SiteConfig, cooldown int) *SiteMonitor {
+// NewSiteMonitor creates a site monitor. alertCfg is the full alert config
+// (provides both cooldown and per-type tolerance).
+func NewSiteMonitor(store *Store, alerter *Alerter, sites []config.SiteConfig, alertCfg config.AlertConfig) *SiteMonitor {
 	return &SiteMonitor{
 		store:    store,
 		alerter:  alerter,
 		sites:    sites,
-		cooldown: cooldown,
+		alertCfg: alertCfg,
 		transport: &http.Transport{
 			MaxIdleConnsPerHost: 2,
 			IdleConnTimeout:     30 * time.Second,
@@ -137,7 +137,7 @@ func (m *SiteMonitor) probe(site config.SiteConfig, timeout int) {
 }
 
 // alertOnTransition sends a Gotify alert when a site flips between up and down,
-// respecting the shared alert cooldown.
+// respecting per-type tolerance and alert cooldown.
 func (m *SiteMonitor) alertOnTransition(name, url string, prev *SiteRecord, status string, statusCode int, latencyMs float64, errMsg string) {
 	if prev == nil || prev.Status == status {
 		return // first probe or no transition
@@ -145,18 +145,33 @@ func (m *SiteMonitor) alertOnTransition(name, url string, prev *SiteRecord, stat
 
 	alertType := "site_down"
 	var msg string
+	statusText := BuildStatusText(status, statusCode, latencyMs, errMsg)
 	if status == "down" {
-		if statusCode > 0 {
-			msg = fmt.Sprintf("站点 %s 不可用 — HTTP %d，延迟 %.0fms", name, statusCode, latencyMs)
-		} else {
-			msg = fmt.Sprintf("站点 %s 不可用 — %s", name, errMsg)
-		}
+		msg = fmt.Sprintf("站点 %s 不可用 — %s", name, statusText)
 	} else {
 		alertType = "site_up"
-		msg = fmt.Sprintf("站点 %s 已恢复可用 — HTTP %d，延迟 %.0fms", name, statusCode, latencyMs)
+		msg = fmt.Sprintf("站点 %s 已恢复 — %s", name, statusText)
 	}
 
-	if m.store.CheckAlertCooldown(name, alertType, m.cooldown) {
+	// Reset the opposite type's tolerance counter on transition
+	if alertType == "site_down" {
+		m.store.ResetAlertTolerance(name, "site_up")
+	} else {
+		m.store.ResetAlertTolerance(name, "site_down")
+	}
+
+	// Tolerance: only alert after consecutive triggers
+	count, err := m.store.IncrementAlertTolerance(name, alertType)
+	if err != nil {
+		log.Printf("ERROR: increment tolerance %s %s: %v", alertType, name, err)
+		return
+	}
+	tolerance := m.alertCfg.GetTolerance(alertType)
+	if count < tolerance {
+		return
+	}
+
+	if m.store.CheckAlertCooldown(name, alertType, m.alertCfg.CooldownSeconds) {
 		return
 	}
 	m.alerter.sendAlert(name, alertType, msg, fmt.Sprintf("%s\nURL: %s", msg, url))

@@ -16,7 +16,8 @@ alerts:
   traffic_tx_mbps: 800           # Alert when Tx traffic (Mbps) exceeds this value
   cooldown_seconds: 300          # Minimum seconds between same-type alerts per server
   tolerance:                     # Consecutive triggers before alerting (per type)
-    offline: 3                   # Offline alert after 3 consecutive offline detections
+    offline: 3                   # Offline alert after 3 consecutive scans still find no report
+    online: 3                    # Recovery alert after 3 consecutive reports are back online
     cpu: 3                       # CPU alert after 3 consecutive threshold crossings
     traffic_rx: 3                # Inbound traffic alert after 3 consecutive crossings
     traffic_tx: 3                # Outbound traffic alert after 3 consecutive crossings

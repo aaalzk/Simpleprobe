@@ -35,6 +35,7 @@ type GotifyConfig struct {
 // AlertTolerance holds per-type tolerance (consecutive triggers before alerting).
 type AlertTolerance struct {
 	Offline   int `yaml:"offline"`
+	Online    int `yaml:"online"`
 	CPU       int `yaml:"cpu"`
 	TrafficRx int `yaml:"traffic_rx"`
 	TrafficTx int `yaml:"traffic_tx"`
@@ -75,6 +76,10 @@ func (c *AlertConfig) GetTolerance(alertType string) int {
 		if c.Tolerance.Offline > 0 {
 			return c.Tolerance.Offline
 		}
+	case "online":
+		if c.Tolerance.Online > 0 {
+			return c.Tolerance.Online
+		}
 	case "cpu":
 		if c.Tolerance.CPU > 0 {
 			return c.Tolerance.CPU
@@ -114,6 +119,7 @@ func DefaultServerConfig() ServerConfig {
 			CooldownSeconds: 300,
 			Tolerance: AlertTolerance{
 				Offline:   3,
+				Online:    3,
 				CPU:       3,
 				TrafficRx: 3,
 				TrafficTx: 3,

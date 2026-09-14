@@ -146,10 +146,9 @@ func (h *APIHandler) handleReport(w http.ResponseWriter, r *http.Request) {
 		// Non-fatal: we already updated the server state
 	}
 
-	// Check recovery alert
-	if wasOffline {
-		h.alerter.SendRecoveryAlert(report.Name)
-	}
+	// Check recovery alert (runs on every report; a recovery is only announced
+	// once the server has reported online for `online` consecutive reports).
+	h.alerter.CheckOnline(report.Name, wasOffline)
 
 	// Check alerts immediately
 	h.alerter.CheckServer(report.Name, m.CPUPercent, m.NetRxRate, m.NetTxRate, m.TopCPUProcs)

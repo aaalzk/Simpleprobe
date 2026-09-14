@@ -24,6 +24,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Test
+        run: go test ./...
+
       - name: Build server
         run: go build -o /dev/null ./cmd/server
 

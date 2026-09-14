@@ -58,6 +58,7 @@ alerts:
   cooldown_seconds: 300
   tolerance:                     # 连续触发次数才发出告警（各类型独立）
     offline: 3
+    online: 3
     cpu: 3
     traffic_rx: 3
     traffic_tx: 3
@@ -308,22 +309,25 @@ make build-server
 
 | 类型 | 触发条件 | 冷却 | 容忍度 |
 |------|---------|------|--------|
-| `offline` | 连续 N 秒无上报 | 可配置 | 默认 3 次 |
-| `online` | 重新上线时 | 同 offline | 默认 3 次 |
+| `offline` | 连续 N 次扫描（每 15s 一次）仍无上报 | 可配置 | 默认 3 次 |
+| `online` | 恢复后连续 N 次上报都在线 | 同 offline | 默认 3 次 |
 | `cpu` | CPU > 阈值 | 可配置 | 默认 3 次 |
 | `traffic_rx` | 入站流量 > 阈值 | 可配置 | 默认 3 次 |
 | `traffic_tx` | 出站流量 > 阈值 | 可配置 | 默认 3 次 |
-| `site_down` | 站点探测失败（网络错误/超时/HTTP ≥ 400） | 同 offline | 默认 3 次 |
-| `site_up` | 站点恢复可用时 | 同 site_down | 默认 3 次 |
+| `site_down` | 连续 N 次探测失败（网络错误/超时/HTTP ≥ 400） | 同 offline | 默认 3 次 |
+| `site_up` | 连续 N 次探测成功 | 同 site_down | 默认 3 次 |
 
 ### 告警容忍度
 
 每种告警类型独立配置容忍度（连续触发次数）。例如默认容忍度为 3 时，服务器需要连续 3 次检测都超过 CPU 阈值才会发出告警，避免因瞬间抖动触发误报。当条件恢复正常时，计数器自动重置。
 
+“连续 N 次检测”按各自的采样节奏计数：`offline` / `online` 依据每次上报与每 15s 一次的离线扫描，`cpu` / `traffic_*` 依据每次上报，`site_down` / `site_up` 依据每次站点探测（默认 60s）。一次故障只告警一次；只有状态真正恢复、计数器归零后再次满足条件，才会重新告警。
+
 ```yaml
 alerts:
   tolerance:
-    offline: 3       # 离线告警：连续 3 次检测离线才告警
+    offline: 3       # 离线告警：连续 3 次扫描仍无上报才告警
+    online: 3        # 恢复告警：恢复后连续 3 次上报在线才告警
     cpu: 3           # CPU 告警：连续 3 次超阈值才告警
     traffic_rx: 3    # 入站流量告警
     traffic_tx: 3    # 出站流量告警

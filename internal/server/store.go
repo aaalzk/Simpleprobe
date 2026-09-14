@@ -298,6 +298,28 @@ func (s *Store) MarkOffline(timeoutSeconds int) ([]string, error) {
 	return names, nil
 }
 
+// GetOfflineServers returns the names of every server currently marked offline.
+// Unlike MarkOffline (which only reports the online→offline transition), this
+// is used by the offline alerter so that each scan after the transition still
+// counts towards the "consecutive detections" tolerance.
+func (s *Store) GetOfflineServers() ([]string, error) {
+	rows, err := s.db.Query(`SELECT name FROM servers WHERE status = 'offline' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // GetAllServers returns all server records.
 func (s *Store) GetAllServers() ([]ServerRecord, error) {
 	query := `SELECT id, name, status, last_seen, cpu_percent, mem_percent, mem_total, mem_used,

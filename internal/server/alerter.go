@@ -43,22 +43,37 @@ func (a *Alerter) Start() {
 	}()
 }
 
-// scanOffline checks for servers that have gone offline.
+// scanOffline checks for servers that have gone offline. It runs on a fixed
+// cadence (15s) and counts every scan that still finds a server offline, so
+// the "consecutive detections" tolerance really means consecutive scans.
 func (a *Alerter) scanOffline() {
-	offlineNames, err := a.store.MarkOffline(a.cfg.OfflineSeconds)
+	newlyOffline, err := a.store.MarkOffline(a.cfg.OfflineSeconds)
 	if err != nil {
 		log.Printf("ERROR: mark offline: %v", err)
 		return
 	}
-	for _, name := range offlineNames {
-		// Tolerance: count consecutive offline detections
+	// A fresh outage interrupts any pending recovery confirmation.
+	for _, name := range newlyOffline {
+		if err := a.store.ResetAlertTolerance(name, "online"); err != nil {
+			log.Printf("ERROR: reset online tolerance %s: %v", name, err)
+		}
+	}
+
+	names, err := a.store.GetOfflineServers()
+	if err != nil {
+		log.Printf("ERROR: list offline servers: %v", err)
+		return
+	}
+	tolerance := a.cfg.GetTolerance("offline")
+	for _, name := range names {
 		count, err := a.store.IncrementAlertTolerance(name, "offline")
 		if err != nil {
 			log.Printf("ERROR: increment tolerance offline %s: %v", name, err)
 			continue
 		}
-		tolerance := a.cfg.GetTolerance("offline")
-		if count < tolerance {
+		// Alert exactly once per outage: the counter keeps rising while the
+		// server stays down, and is reset when it reports again.
+		if count != tolerance {
 			continue
 		}
 		if a.store.CheckAlertCooldown(name, "offline", a.cfg.CooldownSeconds) {
@@ -69,13 +84,22 @@ func (a *Alerter) scanOffline() {
 	}
 }
 
-// SendRecoveryAlert sends a recovery notification when a previously offline
-// server comes back online. Called by the API handler before upserting.
-func (a *Alerter) SendRecoveryAlert(name string) {
-	// Reset offline tolerance counter since server is back
-	a.store.ResetAlertTolerance(name, "offline")
+// CheckOnline is called for every agent report. wasOffline says whether the
+// server was still marked offline before this report, which starts a new
+// recovery confirmation window. The recovery alert only fires once the server
+// has reported `online` tolerance times in a row, so a single packet after a
+// flapping link does not announce a recovery.
+func (a *Alerter) CheckOnline(name string, wasOffline bool) {
+	if wasOffline {
+		// The server is back: this outage is over, restart its counter.
+		if err := a.store.ResetAlertTolerance(name, "offline"); err != nil {
+			log.Printf("ERROR: reset offline tolerance %s: %v", name, err)
+		}
+	} else if a.store.GetAlertToleranceCount(name, "online") == 0 {
+		// Steady state: no recovery to confirm.
+		return
+	}
 
-	// Tolerance for recovery
 	count, err := a.store.IncrementAlertTolerance(name, "online")
 	if err != nil {
 		log.Printf("ERROR: increment tolerance online %s: %v", name, err)
@@ -87,6 +111,10 @@ func (a *Alerter) SendRecoveryAlert(name string) {
 	}
 	if a.store.CheckAlertCooldown(name, "online", a.cfg.CooldownSeconds) {
 		return
+	}
+	// Confirmed: stop counting until the next outage.
+	if err := a.store.ResetAlertTolerance(name, "online"); err != nil {
+		log.Printf("ERROR: reset online tolerance %s: %v", name, err)
 	}
 	msg := fmt.Sprintf("服务器 %s 已恢复上线 (连续 %d 次检测)", name, count)
 	a.sendAlert(name, "online", msg, msg)

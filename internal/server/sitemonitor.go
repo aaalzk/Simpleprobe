@@ -133,46 +133,59 @@ func (m *SiteMonitor) probe(site config.SiteConfig, timeout int) {
 		log.Printf("ERROR: insert site check %s: %v", site.Name, err)
 	}
 
-	m.alertOnTransition(site.Name, site.URL, prev, status, statusCode, latencyMs, errMsg)
+	m.alertOnProbe(site.Name, site.URL, prev, status, statusCode, latencyMs, errMsg)
 }
 
-// alertOnTransition sends a Gotify alert when a site flips between up and down,
-// respecting per-type tolerance and alert cooldown.
-func (m *SiteMonitor) alertOnTransition(name, url string, prev *SiteRecord, status string, statusCode int, latencyMs float64, errMsg string) {
-	if prev == nil || prev.Status == status {
-		return // first probe or no transition
-	}
-
+// alertOnProbe evaluates one probe result against the per-type tolerance and
+// cooldown, and raises site_down / site_up alerts. Every probe counts, so a
+// tolerance of 3 means "3 consecutive probes with the same conclusion"; a probe
+// that contradicts a counter restarts it.
+func (m *SiteMonitor) alertOnProbe(name, url string, prev *SiteRecord, status string, statusCode int, latencyMs float64, errMsg string) {
 	alertType := "site_down"
-	var msg string
-	statusText := BuildStatusText(status, statusCode, latencyMs, errMsg)
-	if status == "down" {
-		msg = fmt.Sprintf("站点 %s 不可用 — %s", name, statusText)
-	} else {
+	opposite := "site_up"
+	if status == "up" {
 		alertType = "site_up"
-		msg = fmt.Sprintf("站点 %s 已恢复 — %s", name, statusText)
+		opposite = "site_down"
 	}
 
-	// Reset the opposite type's tolerance counter on transition
-	if alertType == "site_down" {
-		m.store.ResetAlertTolerance(name, "site_up")
-	} else {
-		m.store.ResetAlertTolerance(name, "site_down")
+	if prev == nil {
+		// First probe ever only establishes the baseline; never alert on it.
+		if err := m.store.ResetAlertTolerance(name, alertType); err != nil {
+			log.Printf("ERROR: reset tolerance %s %s: %v", alertType, name, err)
+		}
+		if err := m.store.ResetAlertTolerance(name, opposite); err != nil {
+			log.Printf("ERROR: reset tolerance %s %s: %v", opposite, name, err)
+		}
+		return
 	}
 
-	// Tolerance: only alert after consecutive triggers
 	count, err := m.store.IncrementAlertTolerance(name, alertType)
 	if err != nil {
 		log.Printf("ERROR: increment tolerance %s %s: %v", alertType, name, err)
 		return
 	}
-	tolerance := m.alertCfg.GetTolerance(alertType)
-	if count < tolerance {
+	// This probe contradicts the opposite conclusion: restart its counter.
+	if prev.Status != status {
+		if err := m.store.ResetAlertTolerance(name, opposite); err != nil {
+			log.Printf("ERROR: reset tolerance %s %s: %v", opposite, name, err)
+		}
+	}
+
+	// Alert exactly once per confirmed state, i.e. when the counter first
+	// reaches the tolerance; it keeps rising while the state holds.
+	if count != m.alertCfg.GetTolerance(alertType) {
+		return
+	}
+	if m.store.CheckAlertCooldown(name, alertType, m.alertCfg.CooldownSeconds) {
 		return
 	}
 
-	if m.store.CheckAlertCooldown(name, alertType, m.alertCfg.CooldownSeconds) {
-		return
+	statusText := BuildStatusText(status, statusCode, latencyMs, errMsg)
+	var msg string
+	if status == "down" {
+		msg = fmt.Sprintf("站点 %s 不可用 — %s", name, statusText)
+	} else {
+		msg = fmt.Sprintf("站点 %s 已恢复 — %s", name, statusText)
 	}
 	m.alerter.sendAlert(name, alertType, msg, fmt.Sprintf("%s\nURL: %s", msg, url))
 }

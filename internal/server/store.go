@@ -599,6 +599,15 @@ func (s *Store) ResetAlertTolerance(serverName, alertType string) error {
 	return err
 }
 
+// ClearAlertTolerances drops every consecutive counter. A counter describes an
+// uninterrupted run of detections, which a process restart breaks anyway;
+// clearing on startup also discards leftovers written by older builds whose
+// counting rules differed (those could otherwise fire a bogus alert).
+func (s *Store) ClearAlertTolerances() error {
+	_, err := s.db.Exec(`DELETE FROM alert_tolerance`)
+	return err
+}
+
 // GetAlertToleranceCount returns the current consecutive count, 0 if no record.
 func (s *Store) GetAlertToleranceCount(serverName, alertType string) int {
 	var n int

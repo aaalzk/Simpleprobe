@@ -34,6 +34,14 @@ func NewAlerter(store *Store, cfg config.AlertConfig, gotify config.GotifyConfig
 
 // Start begins the periodic alert scanning loop. Runs in a goroutine.
 func (a *Alerter) Start() {
+	// Consecutive counters describe an uninterrupted run of detections, which a
+	// restart breaks anyway. Clearing them also drops leftovers written by
+	// older builds whose counting rules differed — those could otherwise fire a
+	// bogus "已恢复上线" for a server that never went offline.
+	if err := a.store.ClearAlertTolerances(); err != nil {
+		log.Printf("ERROR: clear alert tolerances: %v", err)
+	}
+
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()

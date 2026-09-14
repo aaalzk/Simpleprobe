@@ -202,3 +202,32 @@ func TestOnlineAlertSkippedWhenOutageRepeats(t *testing.T) {
 		t.Fatalf("online alerts after a full re-confirmation = %d, want 1", got)
 	}
 }
+
+// Counters left behind by older builds must not announce a recovery for a
+// server that never went offline (Alerter.Start clears them on boot).
+func TestStaleCountersDoNotAnnounceRecovery(t *testing.T) {
+	st := newTestStore(t)
+	a := newTestAlerter(t, st)
+	reportOnline(t, st, "Storage")
+
+	// Leftovers of the kind an older build produced for a healthy server.
+	for i := 0; i < 7; i++ {
+		if _, err := st.IncrementAlertTolerance("Storage", "online"); err != nil {
+			t.Fatalf("seed stale counter: %v", err)
+		}
+	}
+
+	if err := st.ClearAlertTolerances(); err != nil { // what Alerter.Start does on boot
+		t.Fatalf("ClearAlertTolerances: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		a.CheckOnline("Storage", false)
+	}
+	if got := countAlerts(t, st, "Storage", "online"); got != 0 {
+		t.Fatalf("stale counter announced %d bogus recovery alert(s), want 0", got)
+	}
+	if n := st.GetAlertToleranceCount("Storage", "online"); n != 0 {
+		t.Fatalf("online counter during steady state = %d, want 0", n)
+	}
+}

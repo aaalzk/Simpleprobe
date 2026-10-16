@@ -135,7 +135,18 @@ func TestOfflineAlertFiresAgainAfterRecovery(t *testing.T) {
 func TestOnlineAlertNeedsConsecutiveReportsAndResets(t *testing.T) {
 	st := newTestStore(t)
 	a := newTestAlerter(t, st)
+
+	// A real outage first: a recovery is only announced for an outage that was
+	// announced too.
 	reportOnline(t, st, "Storage")
+	backdateLastSeen(t, st, "Storage", 5*time.Minute)
+	for i := 0; i < a.cfg.GetTolerance("offline"); i++ {
+		a.scanOffline()
+	}
+	if got := countAlerts(t, st, "Storage", "offline"); got != 1 {
+		t.Fatalf("offline alerts before the recovery = %d, want 1", got)
+	}
+	reportOnline(t, st, "Storage") // the server is back
 
 	tolerance := a.cfg.GetTolerance("online")
 	if tolerance < 2 {
@@ -174,10 +185,15 @@ func TestOnlineAlertSkippedWhenOutageRepeats(t *testing.T) {
 	st := newTestStore(t)
 	a := newTestAlerter(t, st)
 
-	// Outage #1, then the server reports once — confirmation starts.
+	// Outage #1, announced, then the server reports once — confirmation starts.
 	reportOnline(t, st, "Storage")
 	backdateLastSeen(t, st, "Storage", 5*time.Minute)
-	a.scanOffline()
+	for i := 0; i < a.cfg.GetTolerance("offline"); i++ {
+		a.scanOffline()
+	}
+	if got := countAlerts(t, st, "Storage", "offline"); got != 1 {
+		t.Fatalf("offline alerts for outage #1 = %d, want 1", got)
+	}
 	reportOnline(t, st, "Storage")
 	a.CheckOnline("Storage", true)
 
@@ -229,5 +245,66 @@ func TestStaleCountersDoNotAnnounceRecovery(t *testing.T) {
 	}
 	if n := st.GetAlertToleranceCount("Storage", "online"); n != 0 {
 		t.Fatalf("online counter during steady state = %d, want 0", n)
+	}
+}
+
+// An outage shorter than the offline tolerance never announced anything, so
+// coming back from it must not announce a recovery either.
+func TestRecoverySkippedWhenOutageWasNeverAnnounced(t *testing.T) {
+	st := newTestStore(t)
+	a := newTestAlerter(t, st)
+
+	// One late report: not enough for an offline alert.
+	reportOnline(t, st, "Storage")
+	backdateLastSeen(t, st, "Storage", 5*time.Minute)
+	a.scanOffline()
+	if got := countAlerts(t, st, "Storage", "offline"); got != 0 {
+		t.Fatalf("offline alerts after a single offline scan = %d, want 0", got)
+	}
+
+	// The server reports again, long enough to confirm a recovery.
+	reportOnline(t, st, "Storage")
+	for i := 1; i <= a.cfg.GetTolerance("online"); i++ {
+		a.CheckOnline("Storage", i == 1)
+	}
+	if got := countAlerts(t, st, "Storage", "online"); got != 0 {
+		t.Fatalf("online alerts for an unannounced outage = %d, want 0", got)
+	}
+	if a.AlertActive("Storage", "offline") {
+		t.Fatal("an unannounced outage left an active alert behind")
+	}
+}
+
+// A recovery is announced once per announced outage: once it has been resolved,
+// the next outage needs its own offline alert before it can be resolved too.
+func TestRecoveryAnnouncedOncePerAnnouncedOutage(t *testing.T) {
+	st := newTestStore(t)
+	a := newTestAlerter(t, st)
+	offlineTol := a.cfg.GetTolerance("offline")
+	onlineTol := a.cfg.GetTolerance("online")
+
+	// Announced outage #1 and its confirmed recovery.
+	reportOnline(t, st, "Storage")
+	backdateLastSeen(t, st, "Storage", 5*time.Minute)
+	for i := 0; i < offlineTol; i++ {
+		a.scanOffline()
+	}
+	reportOnline(t, st, "Storage")
+	for i := 1; i <= onlineTol; i++ {
+		a.CheckOnline("Storage", i == 1)
+	}
+	if got := countAlerts(t, st, "Storage", "online"); got != 1 {
+		t.Fatalf("online alerts after the announced outage = %d, want 1", got)
+	}
+
+	// Outage #2 is too short to announce anything, so its recovery is silent.
+	backdateLastSeen(t, st, "Storage", 5*time.Minute)
+	a.scanOffline()
+	reportOnline(t, st, "Storage")
+	for i := 1; i <= onlineTol; i++ {
+		a.CheckOnline("Storage", i == 1)
+	}
+	if got := countAlerts(t, st, "Storage", "online"); got != 1 {
+		t.Fatalf("online alerts after an unannounced outage = %d, want 1", got)
 	}
 }

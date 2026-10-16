@@ -140,6 +140,10 @@ func (m *SiteMonitor) probe(site config.SiteConfig, timeout int) {
 // cooldown, and raises site_down / site_up alerts. Every probe counts, so a
 // tolerance of 3 means "3 consecutive probes with the same conclusion"; a probe
 // that contradicts a counter restarts it.
+//
+// site_up is additionally gated on the matching site_down alert having really
+// been delivered (the in-memory active-alert set in Alerter), so a site that
+// flaps below the down tolerance recovers without a notification.
 func (m *SiteMonitor) alertOnProbe(name, url string, prev *SiteRecord, status string, statusCode int, latencyMs float64, errMsg string) {
 	alertType := "site_down"
 	opposite := "site_up"
@@ -176,8 +180,23 @@ func (m *SiteMonitor) alertOnProbe(name, url string, prev *SiteRecord, status st
 	if count != m.alertCfg.GetTolerance(alertType) {
 		return
 	}
+
+	// Only an announced outage may be announced as over. A dip that never
+	// reached the down tolerance never sent a "不可用" notification, so the
+	// site coming back stays silent instead of announcing a recovery for an
+	// outage nobody was told about.
+	if status == "up" && !m.alerter.AlertActive(name, "site_down") {
+		return
+	}
+
 	if m.store.CheckAlertCooldown(name, alertType, m.alertCfg.CooldownSeconds) {
 		return
+	}
+
+	if status == "up" {
+		// The outage is closed, so a later dip has to raise its own alert
+		// before it can be resolved.
+		m.alerter.ResolveAlert(name, "site_down")
 	}
 
 	statusText := BuildStatusText(status, statusCode, latencyMs, errMsg)

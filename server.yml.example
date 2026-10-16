@@ -23,6 +23,9 @@ alerts:
     traffic_tx: 3                # Outbound traffic alert after 3 consecutive crossings
     site_down: 3                 # Site down alert after 3 consecutive failures
     site_up: 3                   # Site recovery alert after 3 consecutive successes
+                                 # Recovery (online / site_up) is only announced when the matching
+                                 # outage (offline / site_down) was announced too: a blip shorter
+                                 # than the down tolerance comes back silently.
 
 history_retention_hours: 72      # How long to keep historical data
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aaalzk/Simpleprobe/internal/agent"
@@ -20,16 +21,76 @@ type Alerter struct {
 	cfg    config.AlertConfig
 	gotify config.GotifyConfig
 	client *http.Client
+
+	// activeAlerts is the in-memory set of trigger alarms that were really
+	// delivered and are still unresolved, keyed by "<subject>\x00<trigger>".
+	//
+	// It is what keeps a recovery notification honest: "已恢复" is only worth
+	// sending for an outage that was announced as "已离线"/"不可用" in the
+	// first place. A link that merely flaps below the tolerance never enters
+	// the set, so it comes back silently.
+	//
+	// The set is deliberately in memory rather than in SQLite: a restarted
+	// process has no unresolved outage to close, exactly like the consecutive
+	// counters that Alerter.Start drops on boot.
+	mu           sync.Mutex
+	activeAlerts map[string]struct{}
 }
 
 // NewAlerter creates a new Alerter.
 func NewAlerter(store *Store, cfg config.AlertConfig, gotify config.GotifyConfig) *Alerter {
 	return &Alerter{
-		store:  store,
-		cfg:    cfg,
-		gotify: gotify,
-		client: &http.Client{Timeout: 10 * time.Second},
+		store:        store,
+		cfg:          cfg,
+		gotify:       gotify,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		activeAlerts: make(map[string]struct{}),
 	}
+}
+
+// triggerAlertRecovery maps a trigger alarm type to the recovery type that
+// closes it. Types without an entry (cpu, traffic_*) have no recovery
+// counterpart, so nothing is tracked for them.
+var triggerAlertRecovery = map[string]string{
+	"offline":   "online",
+	"site_down": "site_up",
+}
+
+func activeAlertKey(subject, alertType string) string {
+	return subject + "\x00" + alertType
+}
+
+// MarkAlertDelivered records that a trigger alarm was actually delivered. It is
+// called from sendAlert, the single point where an alarm leaves the process, so
+// the set can never disagree with what the outside world has been told.
+func (a *Alerter) MarkAlertDelivered(subject, alertType string) {
+	if _, tracked := triggerAlertRecovery[alertType]; !tracked {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.activeAlerts[activeAlertKey(subject, alertType)] = struct{}{}
+}
+
+// AlertActive reports whether a trigger alarm for subject was delivered and is
+// still unresolved — in other words, whether a recovery is worth announcing.
+func (a *Alerter) AlertActive(subject, alertType string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.activeAlerts[activeAlertKey(subject, alertType)]
+	return ok
+}
+
+// ResolveAlert drops an unresolved alarm and reports whether it was active.
+// Callers announce a recovery only when it returns true, which makes every
+// recovery the exact counterpart of one earlier trigger alarm.
+func (a *Alerter) ResolveAlert(subject, alertType string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	key := activeAlertKey(subject, alertType)
+	_, ok := a.activeAlerts[key]
+	delete(a.activeAlerts, key)
+	return ok
 }
 
 // Start begins the periodic alert scanning loop. Runs in a goroutine.
@@ -96,7 +157,8 @@ func (a *Alerter) scanOffline() {
 // server was still marked offline before this report, which starts a new
 // recovery confirmation window. The recovery alert only fires once the server
 // has reported `online` tolerance times in a row, so a single packet after a
-// flapping link does not announce a recovery.
+// flapping link does not announce a recovery — and only when that outage was
+// itself announced as an offline alert (see activeAlerts).
 func (a *Alerter) CheckOnline(name string, wasOffline bool) {
 	if wasOffline {
 		// The server is back: this outage is over, restart its counter.
@@ -117,6 +179,15 @@ func (a *Alerter) CheckOnline(name string, wasOffline bool) {
 	if count < tolerance {
 		return
 	}
+	// Only an announced outage may be announced as over. An outage shorter than
+	// the offline tolerance never sent anything, so the reports that follow it
+	// just end the confirmation window without a notification.
+	if !a.AlertActive(name, "offline") {
+		if err := a.store.ResetAlertTolerance(name, "online"); err != nil {
+			log.Printf("ERROR: reset online tolerance %s: %v", name, err)
+		}
+		return
+	}
 	if a.store.CheckAlertCooldown(name, "online", a.cfg.CooldownSeconds) {
 		return
 	}
@@ -124,6 +195,9 @@ func (a *Alerter) CheckOnline(name string, wasOffline bool) {
 	if err := a.store.ResetAlertTolerance(name, "online"); err != nil {
 		log.Printf("ERROR: reset online tolerance %s: %v", name, err)
 	}
+	// The outage is closed, so a later one has to raise its own alert before it
+	// can be resolved.
+	a.ResolveAlert(name, "offline")
 	msg := fmt.Sprintf("服务器 %s 已恢复上线 (连续 %d 次检测)", name, count)
 	a.sendAlert(name, "online", msg, msg)
 }
@@ -237,6 +311,9 @@ func (a *Alerter) sendAlert(serverName, alertType, dbMsg, gotifyMsg string) {
 	if err := a.store.SetAlertCooldown(serverName, alertType); err != nil {
 		log.Printf("ERROR: set cooldown: %v", err)
 	}
+	// This alarm is now on the outside; remember it so its recovery can be
+	// announced later (no-op for alarm types without a recovery counterpart).
+	a.MarkAlertDelivered(serverName, alertType)
 
 	// Send to Gotify if configured (full message with details)
 	if a.gotify.URL == "" || a.gotify.Token == "" {

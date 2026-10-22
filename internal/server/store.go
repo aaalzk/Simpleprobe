@@ -9,12 +9,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// rawHistoryHours is how long the full resolution samples are kept. Longer
+// windows are served from the one minute rollup, which keeps the database
+// small without losing any history.
+const rawHistoryHours = 2
+
 // Store provides database operations for the probe server.
 type Store struct {
 	db *sql.DB
 }
 
-// ServerRecord represents a monitored server's current state.
+// ServerRecord is a server's current state.
 type ServerRecord struct {
 	ID            int64     `json:"id"`
 	Name          string    `json:"name"`
@@ -69,7 +74,7 @@ type AlertRecord struct {
 type SiteRecord struct {
 	Name       string    `json:"name"`
 	URL        string    `json:"url"`
-	Status     string    `json:"status"`      // "up" or "down"
+	Status     string    `json:"status"`      // "up", "down" or "challenged"
 	StatusCode int       `json:"status_code"` // 0 if network error / timeout
 	LatencyMs  float64   `json:"latency_ms"`  // -1 if network error / timeout
 	Error      string    `json:"error"`
@@ -86,7 +91,7 @@ type SiteCheckRecord struct {
 	SiteName   string    `json:"site_name"`
 	URL        string    `json:"url"`
 	Timestamp  time.Time `json:"timestamp"`
-	Status     string    `json:"status"`      // "up" or "down"
+	Status     string    `json:"status"`      // "up", "down" or "challenged"
 	StatusCode int       `json:"status_code"` // 0 if network error / timeout
 	LatencyMs  float64   `json:"latency_ms"`  // -1 if network error / timeout
 	Error      string    `json:"error"`
@@ -148,6 +153,20 @@ func (s *Store) migrate() error {
 			load_15      REAL NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_server_time ON reports(server_name, timestamp)`,
+		`CREATE TABLE IF NOT EXISTS reports_1m (
+			server_name  TEXT NOT NULL,
+			ts_minute    INTEGER NOT NULL,
+			samples      INTEGER NOT NULL DEFAULT 1,
+			cpu_percent  REAL NOT NULL DEFAULT 0,
+			mem_percent  REAL NOT NULL DEFAULT 0,
+			disk_percent REAL NOT NULL DEFAULT 0,
+			net_rx_rate  REAL NOT NULL DEFAULT 0,
+			net_tx_rate  REAL NOT NULL DEFAULT 0,
+			load_1       REAL NOT NULL DEFAULT 0,
+			load_5       REAL NOT NULL DEFAULT 0,
+			load_15      REAL NOT NULL DEFAULT 0,
+			PRIMARY KEY (server_name, ts_minute)
+		)`,
 		`CREATE TABLE IF NOT EXISTS alerts (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			server_name TEXT NOT NULL,
@@ -193,6 +212,29 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("exec %q: %w", q, err)
 		}
+	}
+	// The timestamp the agent sent is stored next to the server side one so
+	// a repeated report can be recognised as a duplicate. ALTER TABLE cannot
+	// be part of the idempotent list above (it fails on the second run), so
+	// it happens here.
+	if err := s.addAgentTimestamp(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addAgentTimestamp adds the reports.agent_ts column and the unique index
+// that makes repeated reports idempotent. Existing rows keep a NULL
+// agent_ts, which SQLite treats as distinct, so the index can be created on
+// a populated table.
+func (s *Store) addAgentTimestamp() error {
+	if _, err := s.db.Exec(`ALTER TABLE reports ADD COLUMN agent_ts INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("add agent_ts column: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_agent_ts ON reports(server_name, agent_ts)`); err != nil {
+		return fmt.Errorf("create agent_ts index: %w", err)
 	}
 	return nil
 }
@@ -244,14 +286,47 @@ func (s *Store) UpsertServer(name string, cpuPct, memPct float64, memTotal, memU
 }
 
 // InsertReport stores a historical report entry.
-func (s *Store) InsertReport(name string, cpuPct, memPct, diskPct, netRxRate, netTxRate float64,
+//
+// The sample is written twice on purpose: once at full resolution (kept for
+// a couple of hours) and once into the one minute rollup that carries the
+// long range. agentTS is the timestamp the agent sent; it makes a repeated
+// report idempotent, so a retry cannot double a point in the chart.
+func (s *Store) InsertReport(name string, agentTS int64, cpuPct, memPct, diskPct, netRxRate, netTxRate float64,
 	load1, load5, load15 float64) error {
 
-	query := `INSERT INTO reports (server_name, timestamp, cpu_percent, mem_percent, disk_percent,
-		net_rx_rate, net_tx_rate, load_1, load_5, load_15)
-		VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)`
+	now := time.Now().UTC().Unix()
+	// An implausible agent clock must not break the de-duplication; the
+	// server side time is a safe stand-in.
+	if agentTS <= 0 || agentTS > now+3600 || agentTS < now-7*24*3600 {
+		agentTS = now
+	}
 
-	_, err := s.db.Exec(query, name, cpuPct, memPct, diskPct, netRxRate, netTxRate, load1, load5, load15)
+	query := `INSERT OR REPLACE INTO reports (server_name, timestamp, agent_ts, cpu_percent, mem_percent, disk_percent,
+		net_rx_rate, net_tx_rate, load_1, load_5, load_15)
+		VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	if _, err := s.db.Exec(query, name, agentTS, cpuPct, memPct, diskPct, netRxRate, netTxRate, load1, load5, load15); err != nil {
+		return err
+	}
+
+	// Fold the sample into its minute bucket. The last value of the minute
+	// wins; the sample counter is kept for reference.
+	bucket := (now / 60) * 60
+	rollup := `INSERT INTO reports_1m (server_name, ts_minute, samples, cpu_percent, mem_percent, disk_percent,
+		net_rx_rate, net_tx_rate, load_1, load_5, load_15)
+		VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(server_name, ts_minute) DO UPDATE SET
+			samples      = samples + 1,
+			cpu_percent  = excluded.cpu_percent,
+			mem_percent  = excluded.mem_percent,
+			disk_percent = excluded.disk_percent,
+			net_rx_rate  = excluded.net_rx_rate,
+			net_tx_rate  = excluded.net_tx_rate,
+			load_1       = excluded.load_1,
+			load_5       = excluded.load_5,
+			load_15      = excluded.load_15`
+
+	_, err := s.db.Exec(rollup, name, bucket, cpuPct, memPct, diskPct, netRxRate, netTxRate, load1, load5, load15)
 	return err
 }
 
@@ -320,6 +395,13 @@ func (s *Store) GetOfflineServers() ([]string, error) {
 	return names, rows.Err()
 }
 
+// CountServers returns the number of known servers.
+func (s *Store) CountServers() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM servers`).Scan(&n)
+	return n, err
+}
+
 // GetAllServers returns all server records.
 func (s *Store) GetAllServers() ([]ServerRecord, error) {
 	query := `SELECT id, name, status, last_seen, cpu_percent, mem_percent, mem_total, mem_used,
@@ -370,7 +452,24 @@ func (s *Store) GetServerByName(name string) (*ServerRecord, error) {
 }
 
 // GetHistory returns historical reports for a server within the given time window.
+//
+// The resolution follows the window: a couple of hours are served from the
+// full resolution samples, longer windows from the one minute rollup, and
+// windows beyond a day from five minute buckets. A 24 hour query therefore
+// answers with a few hundred kilobytes instead of a few megabytes.
 func (s *Store) GetHistory(name string, hours int) ([]ReportRecord, error) {
+	switch {
+	case hours <= rawHistoryHours:
+		return s.getRawHistory(name, hours)
+	case hours <= 24:
+		return s.getRollupHistory(name, hours, 60)
+	default:
+		return s.getRollupHistory(name, hours, 300)
+	}
+}
+
+// getRawHistory returns the full resolution samples of a window.
+func (s *Store) getRawHistory(name string, hours int) ([]ReportRecord, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
 	query := `SELECT id, server_name, timestamp, cpu_percent, mem_percent, disk_percent,
 		net_rx_rate, net_tx_rate, load_1, load_5, load_15
@@ -391,6 +490,39 @@ func (s *Store) GetHistory(name string, hours int) ([]ReportRecord, error) {
 			&r.NetRxRate, &r.NetTxRate, &r.Load1, &r.Load5, &r.Load15); err != nil {
 			return nil, err
 		}
+		reports = append(reports, r)
+	}
+	return reports, rows.Err()
+}
+
+// getRollupHistory returns the one minute rollup of a window, folded into
+// buckets of bucketSeconds.
+func (s *Store) getRollupHistory(name string, hours, bucketSeconds int) ([]ReportRecord, error) {
+	cutoff := time.Now().UTC().Add(-time.Duration(hours) * time.Hour).Unix()
+	query := `SELECT ts_minute / ? * ? AS bucket,
+		AVG(cpu_percent), AVG(mem_percent), AVG(disk_percent),
+		AVG(net_rx_rate), AVG(net_tx_rate), AVG(load_1), AVG(load_5), AVG(load_15)
+		FROM reports_1m
+		WHERE server_name = ? AND ts_minute >= ?
+		GROUP BY ts_minute / ? ORDER BY ts_minute / ?`
+
+	rows, err := s.db.Query(query, bucketSeconds, bucketSeconds, name, cutoff, bucketSeconds, bucketSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reports []ReportRecord
+	for rows.Next() {
+		var ts int64
+		var r ReportRecord
+		if err := rows.Scan(&ts, &r.CPUPercent, &r.MemPercent, &r.DiskPercent,
+			&r.NetRxRate, &r.NetTxRate, &r.Load1, &r.Load5, &r.Load15); err != nil {
+			return nil, err
+		}
+		r.ID = ts
+		r.ServerName = name
+		r.Timestamp = time.Unix(ts, 0).UTC()
 		reports = append(reports, r)
 	}
 	return reports, rows.Err()
@@ -470,11 +602,16 @@ func (s *Store) GetAllSiteStates() ([]SiteRecord, error) {
 
 // SiteUptime24h returns (uptime percent, total checks, down checks) for the
 // last 24 hours. Uptime is -1 when there is no data in the window.
+//
+// Probes that were answered with a challenge are excluded from both sides of
+// the ratio: they say nothing about the site's availability, so they must
+// not lower the availability either.
 func (s *Store) SiteUptime24h(name string) (float64, int, int, error) {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	var total, downs int
 	err := s.db.QueryRow(
-		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='down' THEN 1 ELSE 0 END), 0)
+		`SELECT COUNT(CASE WHEN status != 'challenged' THEN 1 END),
+			COALESCE(SUM(CASE WHEN status='down' THEN 1 ELSE 0 END), 0)
 		 FROM site_checks WHERE site_name = ? AND timestamp >= ?`,
 		name, cutoff,
 	).Scan(&total, &downs)
@@ -567,10 +704,23 @@ func (s *Store) SetAlertCooldown(serverName, alertType string) error {
 	return err
 }
 
-// CleanupOldReports removes reports older than the specified number of hours.
+// CleanupOldReports removes history data that fell out of the retention
+// window.
+//
+// The full resolution samples are only kept for a couple of hours; the one
+// minute rollup carries the whole retention window. Without that split the
+// raw table would grow by thousands of rows per server and day.
 func (s *Store) CleanupOldReports(retentionHours int) error {
-	cutoff := time.Now().UTC().Add(-time.Duration(retentionHours) * time.Hour)
-	_, err := s.db.Exec(`DELETE FROM reports WHERE timestamp < ?`, cutoff)
+	rawHours := retentionHours
+	if rawHours > rawHistoryHours {
+		rawHours = rawHistoryHours
+	}
+	rawCutoff := time.Now().UTC().Add(-time.Duration(rawHours) * time.Hour)
+	if _, err := s.db.Exec(`DELETE FROM reports WHERE timestamp < ?`, rawCutoff); err != nil {
+		return err
+	}
+	rollupCutoff := time.Now().UTC().Add(-time.Duration(retentionHours) * time.Hour).Unix()
+	_, err := s.db.Exec(`DELETE FROM reports_1m WHERE ts_minute < ?`, rollupCutoff)
 	return err
 }
 
@@ -599,8 +749,8 @@ func (s *Store) ResetAlertTolerance(serverName, alertType string) error {
 	return err
 }
 
-// ClearAlertTolerances drops every consecutive counter. A counter describes an
-// uninterrupted run of detections, which a process restart breaks anyway;
+// ClearAlertTolerances drops every consecutive counter. A counter describes
+// an uninterrupted run of detections, which a process restart breaks anyway;
 // clearing on startup also discards leftovers written by older builds whose
 // counting rules differed (those could otherwise fire a bogus alert).
 func (s *Store) ClearAlertTolerances() error {
@@ -626,6 +776,9 @@ func BuildStatusText(status string, statusCode int, latencyMs float64, errMsg st
 			return fmt.Sprintf("正常 — %.0fms", latencyMs)
 		}
 		return fmt.Sprintf("正常 — %.2fs", latencyMs/1000)
+	}
+	if status == "challenged" {
+		return "被 Cloudflare 挑战"
 	}
 	// status == "down"
 	if statusCode > 0 {

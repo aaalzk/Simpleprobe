@@ -8,14 +8,14 @@ import (
 
 // ServerConfig holds the server configuration.
 type ServerConfig struct {
-	Listen              string        `yaml:"listen"`
-	DBPath              string        `yaml:"db_path"`
-	Token               string        `yaml:"token"`
-	Gotify              GotifyConfig  `yaml:"gotify"`
-	Alerts              AlertConfig   `yaml:"alerts"`
-	Gaze                GazeConfig    `yaml:"gaze"`
-	HistoryRetentionHrs int           `yaml:"history_retention_hours"`
-	Sites               []SiteConfig  `yaml:"sites"`
+	Listen              string       `yaml:"listen"`
+	DBPath              string       `yaml:"db_path"`
+	Token               string       `yaml:"token"`
+	Gotify              GotifyConfig `yaml:"gotify"`
+	Alerts              AlertConfig  `yaml:"alerts"`
+	Gaze                GazeConfig   `yaml:"gaze"`
+	HistoryRetentionHrs int          `yaml:"history_retention_hours"`
+	Sites               []SiteConfig `yaml:"sites"`
 }
 
 // SiteConfig holds a single site availability monitor target.
@@ -51,6 +51,13 @@ type AlertConfig struct {
 	TrafficTxMbps   float64        `yaml:"traffic_tx_mbps"`
 	CooldownSeconds int            `yaml:"cooldown_seconds"`
 	Tolerance       AlertTolerance `yaml:"tolerance"`
+	// LinkFailureRatio is the share of the known servers that have to go
+	// silent at the same time before the outage is treated as a broken
+	// reporting link (a Cloudflare outage, a dead network hop) instead of
+	// N individual machines. Below that share every server keeps its own
+	// offline alert. The rule only applies when at least two servers are
+	// known: one silent machine is a machine, not a link.
+	LinkFailureRatio float64 `yaml:"link_failure_ratio"`
 }
 
 // GazeConfig holds gaze mode settings.
@@ -58,7 +65,7 @@ type GazeConfig struct {
 	Enabled       bool `yaml:"enabled"`
 	AgentInterval int  `yaml:"agent_interval"` // seconds, default 10
 	WebInterval   int  `yaml:"web_interval"`   // seconds, default 5
-	Timeout       int  `yaml:"timeout"`         // seconds without gaze ping to exit, default 30
+	Timeout       int  `yaml:"timeout"`        // seconds without gaze ping to exit, default 30
 }
 
 // AgentConfig holds the agent configuration.
@@ -67,6 +74,17 @@ type AgentConfig struct {
 	Name      string `yaml:"name"`
 	Token     string `yaml:"token"`
 	Interval  int    `yaml:"interval"`
+	// GazeInterval is the report interval used while somebody is watching
+	// the dashboard. 0 disables the speed-up, so the agent always reports
+	// at Interval. A shorter interval means fresher charts but also more
+	// traffic through Cloudflare.
+	GazeInterval int `yaml:"gaze_interval"`
+	// Contact is an optional contact URL or e-mail that is appended to the
+	// User-Agent, e.g. "https://example.com/agent". Bot-management rules
+	// treat an identifiable, contactable client far more leniently than an
+	// anonymous one, and the contact address is what a Cloudflare
+	// administrator looks for when deciding whether to allow the traffic.
+	Contact string `yaml:"contact"`
 }
 
 // GetTolerance returns the tolerance for the given alert type.
@@ -126,6 +144,7 @@ func DefaultServerConfig() ServerConfig {
 				SiteDown:  3,
 				SiteUp:    3,
 			},
+			LinkFailureRatio: 0.8,
 		},
 		Gaze: GazeConfig{
 			Enabled:       true,
@@ -139,10 +158,11 @@ func DefaultServerConfig() ServerConfig {
 // DefaultAgentConfig returns an AgentConfig with sensible defaults.
 func DefaultAgentConfig() AgentConfig {
 	return AgentConfig{
-		ServerURL: "https://probe.example.com",
-		Name:      "my-server",
-		Token:     "change-me",
-		Interval:  30,
+		ServerURL:    "https://probe.example.com",
+		Name:         "my-server",
+		Token:        "change-me",
+		Interval:     30,
+		GazeInterval: 10,
 	}
 }
 

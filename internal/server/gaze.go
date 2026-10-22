@@ -9,8 +9,8 @@ import (
 // When a gaze ping is received, gaze mode activates. If no ping arrives
 // within the timeout period, gaze mode deactivates.
 type GazeTracker struct {
-	enabled bool
-	mu      sync.Mutex
+	enabled  bool
+	mu       sync.Mutex
 	lastPing time.Time
 	timeout  time.Duration
 }

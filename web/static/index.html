@@ -148,12 +148,12 @@ footer{text-align:center;color:var(--text-dim);font-size:.8rem;padding:16px 0}
 <div class="chart-wrap"><canvas id="detail-canvas"></canvas></div>
 </div>
 <div class="alerts-panel"><h3>📢 最近告警</h3><div id="alert-list" class="alert-list">--</div></div>
-<footer>Simpleprobe v1.4.3 · 刷新间隔 10s</footer>
+<footer>Simpleprobe v1.5.0 · 刷新间隔 15s</footer>
 </div>
 <script>
 (function(){
 'use strict';
-var detail=null,detailChart=null,serverRefresh=10000,serverIntervalId=null;
+var detail=null,detailChart=null,serverRefresh=30000,serverIntervalId=null,streamAbort=null,streamTimer=null;
 window.API_TOKEN="";
 function apiFetch(url,opts){opts=opts||{};opts.headers=opts.headers||{};if(window.API_TOKEN)opts.headers['Authorization']='Bearer '+window.API_TOKEN;return fetch(url,opts)}
 function closeDetail(){
@@ -211,9 +211,55 @@ detailChart=new Chart(ctx,{type:'bar',data:{labels:hL,datasets:[{label:'每小�
 }
 async function fetchServers(){
 try{var r=await apiFetch('/api/servers');if(!r.ok)throw 0;var d=await r.json();
-if(d.gaze)serverRefresh=5000;else serverRefresh=10000;
-if(serverIntervalId){clearInterval(serverIntervalId);serverIntervalId=setInterval(fetchServers,serverRefresh)}
 renderServers(d.servers||[])}catch(e){console.error(e)}
+}
+function startPolling(){
+if(serverIntervalId)return;
+serverIntervalId=setInterval(fetchServers,serverRefresh);
+}
+function stopPolling(){
+if(serverIntervalId){clearInterval(serverIntervalId);serverIntervalId=null}
+}
+// 实时推送（SSE）：服务端在 Agent 上报时立刻推送最新状态，
+// 面板不必再每几秒轮询一次 /api/servers。
+async function startStream(){
+try{
+if(streamAbort)streamAbort.abort();
+streamAbort=new AbortController();
+var r=await apiFetch('/api/stream',{signal:streamAbort.signal});
+if(!r.ok||!r.body)throw new Error('stream http '+r.status);
+stopPolling();
+var reader=r.body.getReader(),dec=new TextDecoder(),buf='';
+for(;;){
+var res=await reader.read();
+if(res.done)break;
+buf+=dec.decode(res.value,{stream:true});
+var idx;
+while((idx=buf.indexOf('\n\n'))>=0){
+handleChunk(buf.slice(0,idx));
+buf=buf.slice(idx+2);
+}
+}
+throw new Error('stream closed');
+}catch(e){
+if(e&&e.name==='AbortError')return;
+console.error('stream error',e);
+}
+// 推送不可用：退回轮询，并稍后重试连接
+startPolling();
+if(!streamTimer)streamTimer=setTimeout(function(){streamTimer=null;startStream()},30000);
+}
+function handleChunk(chunk){
+var type='message',data='';
+chunk.split('\n').forEach(function(line){
+if(!line||line.charAt(0)===':')return;
+var i=line.indexOf(':');
+if(i<0)return;
+var f=line.slice(0,i),v=line.slice(i+1).replace(/^ /,'');
+if(f==='event')type=v;else if(f==='data')data+=v;
+});
+if(type!=='state'||!data)return;
+try{renderServers(JSON.parse(data).servers||[])}catch(e){console.error(e)}
 }
 function renderServers(s){
 var tb=document.getElementById('server-tbody'),cd=document.getElementById('server-cards');
@@ -252,7 +298,7 @@ try{var r=await apiFetch('/api/sites');if(!r.ok)throw 0;renderSites((await r.jso
 }
 function renderSites(s){
 document.getElementById('count-sites-up').textContent=s.filter(function(x){return x.status==='up'}).length;
-document.getElementById('count-sites-down').textContent=s.filter(function(x){return x.status!=='up'&&x.status!=='unknown'}).length;
+document.getElementById('count-sites-down').textContent=s.filter(function(x){return x.status==='down'}).length;
 document.getElementById('sites-hint').textContent=s.length?'每站点独立探测间隔，默认 60s':'未配置站点（在 server.yml 中添加 sites 段）';
 var tb=document.getElementById('sites-tbody'),cd=document.getElementById('sites-cards');
 if(!s.length){tb.innerHTML='<tr class="empty-row"><td colspan="6">未配置站点监控</td></tr>';cd.innerHTML='';return}
@@ -296,9 +342,9 @@ function esc(s){if(!s)return '';var d=document.createElement('div');d.textConten
 document.addEventListener('DOMContentLoaded',function(){
 document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN');
 setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')},1000);
-fetchServers();serverIntervalId=setInterval(fetchServers,serverRefresh);
-fetchSites();setInterval(fetchSites,30000);
-fetchAlerts();setInterval(fetchAlerts,30000);
+fetchServers();startStream();
+fetchSites();setInterval(fetchSites,60000);
+fetchAlerts();setInterval(fetchAlerts,60000);
 document.getElementById('detail-close').onclick=closeDetail;
 document.getElementById('server-tbody').onclick=function(e){var r=e.target.closest('[data-name]');if(r)openDetail('server',r.dataset.name)};
 document.getElementById('server-cards').onclick=function(e){var r=e.target.closest('[data-name]');if(r)openDetail('server',r.dataset.name)};

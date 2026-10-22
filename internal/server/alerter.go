@@ -52,8 +52,9 @@ func NewAlerter(store *Store, cfg config.AlertConfig, gotify config.GotifyConfig
 // closes it. Types without an entry (cpu, traffic_*) have no recovery
 // counterpart, so nothing is tracked for them.
 var triggerAlertRecovery = map[string]string{
-	"offline":   "online",
-	"site_down": "site_up",
+	"offline":      "online",
+	"site_down":    "site_up",
+	"link_failure": "link_recovery",
 }
 
 func activeAlertKey(subject, alertType string) string {
@@ -133,6 +134,36 @@ func (a *Alerter) scanOffline() {
 		log.Printf("ERROR: list offline servers: %v", err)
 		return
 	}
+
+	total, err := a.store.CountServers()
+	if err != nil {
+		log.Printf("ERROR: count servers: %v", err)
+		return
+	}
+
+	// When almost the whole fleet goes silent at the same time, the likely
+	// cause is the reporting path (a Cloudflare outage, a dead network hop)
+	// and not N machines dying together. One link alert then replaces the
+	// per-server offline alerts, which would otherwise flood the operator
+	// with a storm of false outages.
+	linkDown := total >= 2 && len(names) >= 2 &&
+		float64(len(names))/float64(total) >= a.cfg.LinkFailureRatio
+
+	if linkDown {
+		if !a.AlertActive("__system__", "link_failure") {
+			msg := fmt.Sprintf("上报链路异常 — %d/%d 台探针同时失联，疑似 Cloudflare 或网络链路故障", len(names), total)
+			a.sendAlert("__system__", "link_failure", msg, msg)
+		}
+	} else if a.AlertActive("__system__", "link_failure") {
+		// The fleet talks again: close the link alert.
+		a.ResolveAlert("__system__", "link_failure")
+		msg := "上报链路已恢复 — 探针重新开始上报"
+		if len(names) > 0 {
+			msg = fmt.Sprintf("上报链路已恢复 — 探针重新开始上报（仍有 %d 台失联）", len(names))
+		}
+		a.sendAlert("__system__", "link_recovery", msg, msg)
+	}
+
 	tolerance := a.cfg.GetTolerance("offline")
 	for _, name := range names {
 		count, err := a.store.IncrementAlertTolerance(name, "offline")
@@ -143,6 +174,10 @@ func (a *Alerter) scanOffline() {
 		// Alert exactly once per outage: the counter keeps rising while the
 		// server stays down, and is reset when it reports again.
 		if count != tolerance {
+			continue
+		}
+		if linkDown {
+			// The link alert already covers this machine.
 			continue
 		}
 		if a.store.CheckAlertCooldown(name, "offline", a.cfg.CooldownSeconds) {

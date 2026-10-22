@@ -105,11 +105,44 @@ server_url: "https://probe.your-domain.com"
 name: "my-server"
 token: "your-secure-token"
 interval: 30
+# 可选：联系方式，会附加到 User-Agent（见下文 Cloudflare 配置）
+contact: "https://your-domain.com/agent"
 ```
+
+`contact` 是可选的联系方式（URL 或邮箱），会拼进 Agent 的 User-Agent：
+
+```
+simpleprobe-agent/1.5.0 (https://your-domain.com/agent)
+```
+
+可识别、可联系的客户端比匿名客户端宽松得多——这既是 Cloudflare Bot 管理规则的通行做法，也方便你在 Cloudflare 日志里一眼认出哪些流量是自己的探针。
 
 ### 3. Cloudflare 配置
 
 将 Server 域名在 Cloudflare DNS 中开启代理（橙色云图标），确保 SSL/TLS 模式为 "Full" 或 "Full (strict)"。
+
+#### 3.1 源站只放行 Cloudflare（强烈建议）
+
+用安全组/防火墙把源站的 80/443 只放行给 Cloudflare 官方 IP 段（[官方列表](https://www.cloudflare.com/ips/)），或者干脆改用 Cloudflare Tunnel。否则攻击者可以直连源站，绕过 Cloudflare 的全部防护，并伪造 `CF-Connecting-IP` / `X-Forwarded-For` 头——Server 的限速与暴力破解检测会因此被绕过。
+
+#### 3.2 给 Agent 上报接口放行安全产品
+
+探针是机器客户端，User-Agent 形如 `simpleprobe-agent/1.5.0 (+https://your-domain.com/agent)`，很容易被 Bot 类规则判成机器人。建议在 Cloudflare 控制台为 `/api/report` 建一条 **Skip** 规则：
+
+| 条件 | 取值 |
+|------|------|
+| `http.request.uri.path` | `starts_with` `/api/report` |
+| `http.user_agent` | `contains` `simpleprobe-agent` |
+| 动作 | Skip：安全产品 / 缓存 / 限速 / WAF 托管规则 |
+
+另外几条也要注意：
+
+- **Cache Rule**：`/api/*` 一律 bypass cache。Server 已自带 `Cache-Control: no-store`（双保险）；否则一旦开启 Cache Everything，Dashboard 会读到 120 分钟前的旧数据（Cloudflare 对 200 响应的默认 Edge TTL 就是 120 分钟）。
+- **Rate Limiting**：若给 `/api/report` 配了限速，计数窗口设为 **≥ 10 秒**。1 秒窗口会误杀正常上报，触发 Cloudflare 错误 1015。
+- **不要对 `/api/report` 开启 API Shield schema validation**：会直接返回 1020，探针全部失败。
+- **Under Attack Mode（我在受攻击模式）必须排除 `/api/report`**：挑战页需要浏览器执行 JavaScript，探针过不去，会全线掉线。
+
+Agent 侧已有配套处理：识别 Cloudflare 拦截并把 `cf-ray` 打进日志、失败后退避重试。
 
 ### 4. 访问 Dashboard
 
@@ -157,6 +190,8 @@ server {
 
     # Cloudflare：让 Nginx 识别真实用户 IP（而非 Cloudflare 出口 IP）
     # CF-Connecting-IP 由 Cloudflare 加密设置，此处声明信任该头
+    # set_real_ip_from 建议只填 Cloudflare 官方 IP 段（https://www.cloudflare.com/ips/）；
+    # 填 0.0.0.0/0 等于信任任何来源的该头，仅在源站已限制为 Cloudflare 直连时使用
     set_real_ip_from 0.0.0.0/0;
     real_ip_header CF-Connecting-IP;
 
@@ -168,10 +203,12 @@ server {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # 覆盖而不是追加：$proxy_add_x_forwarded_for 会保留客户端自带的
+        # X-Forwarded-For，可被伪造来绕过 Server 的限速与暴力破解检测
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # 长轮询支持（Dashboard 刷新间隔 10s）
+        # 长轮询支持（Dashboard 刷新间隔 15s）
         proxy_read_timeout 30s;
     }
 
@@ -180,7 +217,7 @@ server {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 15s;
         client_max_body_size 64k;
@@ -237,6 +274,38 @@ sudo systemctl reload caddy
 ```
 
 > **注意**：反向代理配置完成后，Dashboard 仍然通过 Cloudflare DNS 访问。Cloudflare 处理跨国流量加速，Nginx/Caddy 处理本地反向代理和 TLS。
+
+## 实时推送（SSE）
+
+Dashboard 默认通过 `GET /api/stream` 接收实时推送：Server 在收到 Agent 上报的那一刻就把最新状态推给所有打开的面板，客户端不再轮询 `/api/servers`（原来 5s 一次，每标签页约 1.7 万次/天）。
+
+- 推送失败（网络中断、反代不支持流式）时前端会自动退回 30s 轮询，并在 30s 后重连，功能不受影响。
+- Server 每 15 秒发一次心跳注释（`: ping`）保活。Cloudflare 到源站的读超时是 125 秒，没有心跳长连接会被 524 掐断。
+- 这条长连接本身也算「有人在看面板」的信号（gaze），行为与原来的轮询一致。
+- 鉴权方式不变：仍然用 `Authorization: Bearer <token>`。浏览器原生 `EventSource` 不支持自定义请求头，所以前端改用 `fetch` + `ReadableStream` 自行解析 SSE。
+
+反向代理需要为这个路径关掉缓冲与压缩：
+
+```nginx
+# SSE：必须关闭缓冲，否则事件会被攒着一起下发
+location /api/stream {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_buffering off;
+    proxy_cache off;
+    gzip off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
+
+Caddy 默认就是流式透传，无需额外配置；如果前面还有一层 Nginx，记得同样关掉 `proxy_buffering`。
+
+> Cloudflare 侧不需要额外规则：SSE 走的就是普通的 `/api/*` 路径，注意不要给它建「缓存全部内容」的 Cache Rule（Server 已自带 `Cache-Control: no-cache`）。
 
 ## 使用 systemd 管理 Server
 
@@ -316,6 +385,8 @@ make build-server
 | `traffic_tx` | 出站流量 > 阈值 | 可配置 | 默认 3 次 |
 | `site_down` | 连续 N 次探测失败（网络错误/超时/HTTP ≥ 400） | 同 offline | 默认 3 次 |
 | `site_up` | 连续 N 次探测成功，且该次不可用告警已发出 | 同 site_down | 默认 3 次 |
+| `link_failure` | 绝大多数探针同时失联（≥ `link_failure_ratio`），疑似上报链路故障 | 同 offline | 触发即发一次 |
+| `link_recovery` | 上报链路恢复 | 同 offline | 触发即发一次 |
 
 ### 告警容忍度
 
@@ -341,6 +412,14 @@ alerts:
     site_up: 3       # 站点恢复告警
 ```
 
+```yaml
+alerts:
+  # 失联比例超过该值（且已知机器 ≥ 2 台）时，判定为「上报链路故障」
+  # （Cloudflare 抖动、网络中断），此时改发一条 link_failure 总告警，
+  # 不再逐台发离线告警，避免告警风暴。默认 0.8。
+  link_failure_ratio: 0.8
+```
+
 ### 站点可用性监控
 
 Server 会按 `sites` 配置对每个站点发起 HTTP(S) GET 请求（等价于
@@ -348,6 +427,7 @@ Server 会按 `sites` 配置对每个站点发起 HTTP(S) GET 请求（等价于
 
 - 最终状态码 `200–399` → `up`（可用）
 - 网络错误、超时、或最终状态码 `≥ 400` → `down`（不可用）
+- 被 Cloudflare 挑战（`403/503/429` 且带 `cf-mitigated` 或挑战页特征）→ `challenged`（**不算不可用**）：挑战说明的是「我们被拦了」，不是「站点挂了」，因此不触发 `site_down` 告警，也不计入 24 小时可用率
 - 站点从 `up` 变 `down` 连续 N 次后触发 `site_down` 告警，恢复后再连续 N 次成功才触发 `site_up` 告警（且仅当该次不可用告警已发出）
 
 Dashboard 的「站点可用性」区块展示每个站点的当前状态与 24 小时可用率，探测状态列显示可读信息（如 "正常 — 23ms"、"HTTP 502"、"连接超时"、"DNS 失败" 等）；点击站点可查看 24 小时逐小时可用率图表。
@@ -358,6 +438,25 @@ Dashboard 的「站点可用性」区块展示每个站点的当前状态与 24 
 |------|------|
 | `GET /api/sites` | 所有配置站点的当前状态 + 24h 可用率统计 |
 | `GET /api/sites/{name}/history?hours=24` | 单个站点的探测历史（状态码/延迟/错误） |
+
+## 历史数据与降采样
+
+监控数据分两层存放，避免 SQLite 随运行时间膨胀：
+
+| 层 | 精度 | 保留时长 | 用途 |
+|---|---|---|---|
+| `reports` | 原始采样（10–30s 一条） | 2 小时 | 短窗口图表 |
+| `reports_1m` | 1 分钟汇总（每分钟最后一个采样值 + 样本数） | `history_retention_hours`（默认 72h） | 长窗口图表 |
+
+`GET /api/history/{name}?hours=N` 按窗口自动选层与精度：
+
+- `N ≤ 2`：原始采样
+- `2 < N ≤ 24`：1 分钟汇总
+- `N > 24`：5 分钟汇总
+
+于是 24 小时查询从「8640 个点、约 1.9MB」变成「1440 个点、约 300KB」，响应还会在源站 gzip，传输量进一步下降。
+
+上报按 Agent 时间戳去重（`reports` 表上的 `(server_name, agent_ts)` 唯一索引）：网络抖动导致的重试不会在图表上留下重复点。
 
 ## 采集指标
 
@@ -403,8 +502,16 @@ cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32
 
 Server 已内置速率限制和暴力破解检测，无需额外配置。如需在反向代理层增加防护：
 
-- 建议在 Cloudflare 上配置 WAF 规则限制 `/api/report` 的访问频率
+- 建议在 Cloudflare 上配置 WAF 规则限制 `/api/report` 的访问频率（计数窗口 ≥ 10 秒）
 - 建议为 Dashboard 添加 Cloudflare Access 或 nginx basic auth（作为第二层保护）
+- 探针上报路径请加 Skip 规则，避免被 Bot/WAF 误伤（见上文 3.2 节）
+
+### Agent 侧的网络健壮性
+
+- **失败退避**：上报失败后按 base → 2×base → 4×base 指数退避（上限 5 分钟），并叠加 ±20% 抖动。固定频率的机器式重试正是 Bot 规则和限速最容易盯上的形态。
+- **可诊断的错误信息**：遇到 Cloudflare 拦截时，Agent 会区分 1015 / 1020 / 挑战页 / 520 / 522 / 524，并把 `cf-ray` 打进日志——拿这个 ID 去 Cloudflare 的 Security Events 里就能查到是哪条规则拦的。
+- **连接复用**：HTTP/2 + keep-alive，上报不再每次重做 TLS 握手。
+- **gaze_interval 可配**：面板有人观看时 Agent 会自动提速上报，设成 `0` 即关闭（默认 10 秒；`interval` 仍是常规间隔）。
 
 ## License
 

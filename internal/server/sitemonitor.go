@@ -115,12 +115,21 @@ func (m *SiteMonitor) probe(site config.SiteConfig, timeout int) {
 		log.Printf("SiteMonitor: %s (%s) DOWN: %v", site.Name, site.URL, err)
 	} else {
 		defer resp.Body.Close()
-		// Drain a small amount so the connection can be reused.
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		// Read a small amount so the connection can be reused. The bytes are
+		// kept because a Cloudflare challenge is recognised by its body.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		statusCode = resp.StatusCode
-		if statusCode >= 200 && statusCode < 400 {
+		switch {
+		case statusCode >= 200 && statusCode < 400:
 			status = "up"
-		} else {
+		case isCloudflareChallenge(resp, body):
+			// The site answered with a challenge page instead of its own
+			// content. That says nothing about the site's availability, so
+			// it must not be reported as "down".
+			status = "challenged"
+			errMsg = "被 Cloudflare 挑战"
+			log.Printf("SiteMonitor: %s (%s) CHALLENGED: HTTP %d", site.Name, site.URL, statusCode)
+		default:
 			log.Printf("SiteMonitor: %s (%s) DOWN: HTTP %d", site.Name, site.URL, statusCode)
 		}
 	}
@@ -145,6 +154,12 @@ func (m *SiteMonitor) probe(site config.SiteConfig, timeout int) {
 // been delivered (the in-memory active-alert set in Alerter), so a site that
 // flaps below the down tolerance recovers without a notification.
 func (m *SiteMonitor) alertOnProbe(name, url string, prev *SiteRecord, status string, statusCode int, latencyMs float64, errMsg string) {
+	if status == "challenged" {
+		// A challenge says nothing about the site's availability: it
+		// neither confirms an outage nor confirms a recovery, so it must
+		// not touch any counter.
+		return
+	}
 	alertType := "site_down"
 	opposite := "site_up"
 	if status == "up" {

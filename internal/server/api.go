@@ -207,9 +207,15 @@ func (h *APIHandler) handleReport(w http.ResponseWriter, r *http.Request) {
 
 	m := report.Metrics
 
-	// Check if server was previously offline (recovery detection)
+	// Check if server was previously offline (recovery detection).
+	//
+	// A soft-deleted server still gets its request accepted (its agent may
+	// simply not know it was removed) and its samples are still recorded, but
+	// it must stay invisible and silent: no recovery alert, no threshold
+	// alert. Hidden is immutable here — UpsertServer keeps the flag as it is.
 	prevServer, _ := h.store.GetServerByName(report.Name)
-	wasOffline := prevServer != nil && prevServer.Status == "offline"
+	hidden := prevServer != nil && prevServer.Hidden
+	wasOffline := !hidden && prevServer != nil && prevServer.Status == "offline"
 
 	// Upsert server state
 	if err := h.store.UpsertServer(
@@ -244,10 +250,13 @@ func (h *APIHandler) handleReport(w http.ResponseWriter, r *http.Request) {
 
 	// Check recovery alert (runs on every report; a recovery is only announced
 	// once the server has reported online for `online` consecutive reports).
-	h.alerter.CheckOnline(report.Name, wasOffline)
+	// A hidden server is skipped entirely.
+	if !hidden {
+		h.alerter.CheckOnline(report.Name, wasOffline)
 
-	// Check alerts immediately
-	h.alerter.CheckServer(report.Name, m.CPUPercent, m.NetRxRate, m.NetTxRate, m.TopCPUProcs)
+		// Check alerts immediately
+		h.alerter.CheckServer(report.Name, m.CPUPercent, m.NetRxRate, m.NetTxRate, m.TopCPUProcs)
+	}
 
 	writeJSON(w, r, http.StatusOK, struct {
 		Status string `json:"status"`

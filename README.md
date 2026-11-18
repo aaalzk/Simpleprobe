@@ -165,6 +165,29 @@ sudo sh upgrade-agent.sh
 sudo sh upgrade-agent.sh v1.1.0
 ```
 
+## 删除主机
+
+主机由 Agent 主动上报后自动注册，面板上没有删除按钮——删除是**命令行运维操作**，避免误点。
+
+删除是软删除：主机从面板和告警里消失，但它的指标历史、告警记录都保留，随时可以恢复。
+
+```bash
+# 列出全部主机（含已隐藏的，HIDDEN 列为 yes）
+sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host list
+
+# 软删除一台主机
+sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host delete old-box
+
+# 恢复
+sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host restore old-box
+```
+
+> **注意**
+> - 删除只影响面板与告警，**不会**去动那台机器上的 Agent。想彻底下线，还需要在那台机器上 `systemctl disable --now simpleprobe-agent`。
+> - 如果 Agent 仍在运行，它上报的数据会继续写进库里（恢复后历史是连续的），但**不会**让主机重新出现在面板上——`hidden` 标记只能由 `host restore` 清除。
+> - Server 使用 WAL 模式，可以在运行中执行这些命令；面板下一次刷新后生效。
+> - 这是软删除。确实需要连历史一起清除时，停掉 Server 后用手工 SQL 清理 `servers` / `reports` / `reports_1m` / `alerts` / `alert_cooldowns` / `alert_tolerance` 六张表中 `server_name` 匹配的行。
+
 ## 反向代理
 
 Server 默认监听 `:8080`，可以通过 Nginx 或 Caddy 反向代理来提供 HTTPS 和静态资源缓存。

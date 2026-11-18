@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/aaalzk/Simpleprobe/internal/config"
@@ -30,6 +31,14 @@ func main() {
 	cfg, err := config.LoadServerConfig(*cfgPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Local maintenance subcommands work on the database directly and never
+	// start the HTTP server, so they run before the token check: an operator
+	// deleting a host does not need the API token.
+	if args := flag.Args(); len(args) > 0 {
+		runHostCommand(cfg, args)
+		return
 	}
 
 	// Token validation
@@ -126,4 +135,109 @@ func main() {
 		log.Fatalf("Server error: %v", err)
 	}
 	log.Println("Server stopped")
+}
+
+// runHostCommand implements the local `host` subcommands. They talk to the
+// same SQLite file the server uses (WAL mode, so a running server is fine)
+// and provide the only way to soft-delete a host: the dashboard stays as
+// simple as it is, deleting is an explicit operator action.
+func runHostCommand(cfg config.ServerConfig, args []string) {
+	if args[0] != "host" {
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", args[0])
+		hostUsage()
+		os.Exit(2)
+	}
+	if len(args) < 2 {
+		hostUsage()
+		os.Exit(2)
+	}
+
+	store, err := server.NewStore(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("Failed to open database %s: %v", cfg.DBPath, err)
+	}
+	defer store.Close()
+
+	switch args[1] {
+	case "list":
+		hostList(store)
+	case "delete", "hide":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: simpleprobe-server -c <server.yml> host delete <name>")
+			os.Exit(2)
+		}
+		hostDelete(store, args[2])
+	case "restore", "unhide":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: simpleprobe-server -c <server.yml> host restore <name>")
+			os.Exit(2)
+		}
+		hostRestore(store, args[2])
+	default:
+		hostUsage()
+		os.Exit(2)
+	}
+}
+
+// hostList prints every known host, hidden ones included.
+func hostList(store *server.Store) {
+	servers, err := store.ListAllServers()
+	if err != nil {
+		log.Fatalf("Failed to list hosts: %v", err)
+	}
+	if len(servers) == 0 {
+		fmt.Println("暂无主机。")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSTATUS\tLAST_SEEN\tHIDDEN")
+	for _, s := range servers {
+		hidden := "no"
+		if s.Hidden {
+			hidden = "yes"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			s.Name, s.Status, s.LastSeen.Local().Format("2006-01-02 15:04:05"), hidden)
+	}
+	w.Flush()
+}
+
+// hostDelete soft-deletes a host.
+func hostDelete(store *server.Store, name string) {
+	ok, err := store.HideServer(name)
+	if err != nil {
+		log.Fatalf("Failed to hide host %q: %v", name, err)
+	}
+	if !ok {
+		fmt.Fprintf(os.Stderr, "主机 %q 不存在。\n", name)
+		os.Exit(1)
+	}
+
+	fmt.Printf("已隐藏主机 %s（软删除）。\n", name)
+	fmt.Println("历史数据和告警记录都保留，看板与告警中不再出现这台主机。")
+	fmt.Println("如果该机器的 agent 仍在运行，它不会重新出现在面板上。恢复请用：")
+	fmt.Printf("  simpleprobe-server -c <server.yml> host restore %s\n", name)
+}
+
+// hostRestore brings a hidden host back.
+func hostRestore(store *server.Store, name string) {
+	ok, err := store.UnhideServer(name)
+	if err != nil {
+		log.Fatalf("Failed to restore host %q: %v", name, err)
+	}
+	if !ok {
+		fmt.Fprintf(os.Stderr, "主机 %q 不存在。\n", name)
+		os.Exit(1)
+	}
+
+	fmt.Printf("已恢复主机 %s，它会重新出现在看板中。\n", name)
+}
+
+// hostUsage prints the subcommand help.
+func hostUsage() {
+	fmt.Fprintln(os.Stderr, "用法:")
+	fmt.Fprintln(os.Stderr, "  simpleprobe-server -c <server.yml> host list             列出全部主机（含已隐藏）")
+	fmt.Fprintln(os.Stderr, "  simpleprobe-server -c <server.yml> host delete <name>    软删除主机（隐藏，保留历史）")
+	fmt.Fprintln(os.Stderr, "  simpleprobe-server -c <server.yml> host restore <name>   恢复已隐藏的主机")
 }

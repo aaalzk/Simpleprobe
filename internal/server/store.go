@@ -44,6 +44,11 @@ type ServerRecord struct {
 	ProcessCount  uint64    `json:"process_count"`
 	OSName        string    `json:"os_name"`
 	KernelVersion string    `json:"kernel_version"`
+	// Hidden marks a soft-deleted server. It is never serialised to the
+	// dashboard (the API already filters hidden rows out); the field exists
+	// so the report path can recognise a deleted server and the command line
+	// can list it.
+	Hidden bool `json:"-"`
 }
 
 // ReportRecord is a historical report entry.
@@ -220,6 +225,24 @@ func (s *Store) migrate() error {
 	if err := s.addAgentTimestamp(); err != nil {
 		return err
 	}
+	if err := s.addHiddenColumn(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addHiddenColumn adds the soft-delete flag to the servers table.
+//
+// A hidden server keeps every row it owns (state and history) and merely
+// disappears from the dashboard and from alerting. The flag is never cleared
+// by a report, so an agent that is still running cannot silently undo the
+// delete; restoring it takes an explicit command.
+func (s *Store) addHiddenColumn() error {
+	if _, err := s.db.Exec(`ALTER TABLE servers ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("add hidden column: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -336,7 +359,7 @@ func (s *Store) MarkOffline(timeoutSeconds int) ([]string, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(timeoutSeconds) * time.Second)
 
 	// First, find servers that are online but past the cutoff
-	rows, err := s.db.Query(`SELECT name FROM servers WHERE status = 'online' AND last_seen < ?`, cutoff)
+	rows, err := s.db.Query(`SELECT name FROM servers WHERE status = 'online' AND hidden = 0 AND last_seen < ?`, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +387,7 @@ func (s *Store) MarkOffline(timeoutSeconds int) ([]string, error) {
 			net_rx_rate = 0, net_tx_rate = 0, net_rx_bytes = 0, net_tx_bytes = 0,
 			load_1 = 0, load_5 = 0, load_15 = 0,
 			uptime = 0, tcp_conns = 0, process_count = 0
-			WHERE status = 'online' AND last_seen < ?`
+			WHERE status = 'online' AND hidden = 0 AND last_seen < ?`
 		if _, err := s.db.Exec(query, cutoff); err != nil {
 			return nil, err
 		}
@@ -378,7 +401,7 @@ func (s *Store) MarkOffline(timeoutSeconds int) ([]string, error) {
 // is used by the offline alerter so that each scan after the transition still
 // counts towards the "consecutive detections" tolerance.
 func (s *Store) GetOfflineServers() ([]string, error) {
-	rows, err := s.db.Query(`SELECT name FROM servers WHERE status = 'offline' ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name FROM servers WHERE status = 'offline' AND hidden = 0 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -395,19 +418,36 @@ func (s *Store) GetOfflineServers() ([]string, error) {
 	return names, rows.Err()
 }
 
-// CountServers returns the number of known servers.
+// CountServers returns the number of visible servers. Soft-deleted ones are
+// excluded: they must not skew the link-failure ratio in the alerter.
 func (s *Store) CountServers() (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM servers`).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM servers WHERE hidden = 0`).Scan(&n)
 	return n, err
 }
 
-// GetAllServers returns all server records.
-func (s *Store) GetAllServers() ([]ServerRecord, error) {
-	query := `SELECT id, name, status, last_seen, cpu_percent, mem_percent, mem_total, mem_used,
+const serverColumns = `id, name, status, last_seen, cpu_percent, mem_percent, mem_total, mem_used,
 		disk_percent, disk_total, disk_used, net_rx_rate, net_tx_rate, net_rx_bytes, net_tx_bytes,
-		load_1, load_5, load_15, uptime, tcp_conns, process_count, os_name, kernel_version
-		FROM servers ORDER BY name`
+		load_1, load_5, load_15, uptime, tcp_conns, process_count, os_name, kernel_version, hidden`
+
+// scanServer reads one row selected with serverColumns.
+func scanServer(scan func(dest ...any) error) (*ServerRecord, error) {
+	var sr ServerRecord
+	if err := scan(&sr.ID, &sr.Name, &sr.Status, &sr.LastSeen,
+		&sr.CPUPercent, &sr.MemPercent, &sr.MemTotal, &sr.MemUsed,
+		&sr.DiskPercent, &sr.DiskTotal, &sr.DiskUsed,
+		&sr.NetRxRate, &sr.NetTxRate, &sr.NetRxBytes, &sr.NetTxBytes,
+		&sr.Load1, &sr.Load5, &sr.Load15, &sr.Uptime, &sr.TCPConns,
+		&sr.ProcessCount, &sr.OSName, &sr.KernelVersion, &sr.Hidden); err != nil {
+		return nil, err
+	}
+	return &sr, nil
+}
+
+// GetAllServers returns the visible server records. Soft-deleted servers are
+// left out, which is what keeps them off the dashboard.
+func (s *Store) GetAllServers() ([]ServerRecord, error) {
+	query := `SELECT ` + serverColumns + ` FROM servers WHERE hidden = 0 ORDER BY name`
 
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -417,38 +457,89 @@ func (s *Store) GetAllServers() ([]ServerRecord, error) {
 
 	var servers []ServerRecord
 	for rows.Next() {
-		var sr ServerRecord
-		if err := rows.Scan(&sr.ID, &sr.Name, &sr.Status, &sr.LastSeen,
-			&sr.CPUPercent, &sr.MemPercent, &sr.MemTotal, &sr.MemUsed,
-			&sr.DiskPercent, &sr.DiskTotal, &sr.DiskUsed,
-			&sr.NetRxRate, &sr.NetTxRate, &sr.NetRxBytes, &sr.NetTxBytes,
-			&sr.Load1, &sr.Load5, &sr.Load15, &sr.Uptime, &sr.TCPConns,
-			&sr.ProcessCount, &sr.OSName, &sr.KernelVersion); err != nil {
+		sr, err := scanServer(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		servers = append(servers, sr)
+		servers = append(servers, *sr)
 	}
 	return servers, rows.Err()
 }
 
-// GetServerByName returns a single server record.
-func (s *Store) GetServerByName(name string) (*ServerRecord, error) {
-	query := `SELECT id, name, status, last_seen, cpu_percent, mem_percent, mem_total, mem_used,
-		disk_percent, disk_total, disk_used, net_rx_rate, net_tx_rate, net_rx_bytes, net_tx_bytes,
-		load_1, load_5, load_15, uptime, tcp_conns, process_count, os_name, kernel_version
-		FROM servers WHERE name = ?`
+// ListAllServers returns every server, hidden ones included. The dashboard
+// never calls it; it backs the command line `host list`.
+func (s *Store) ListAllServers() ([]ServerRecord, error) {
+	query := `SELECT ` + serverColumns + ` FROM servers ORDER BY name`
 
-	var sr ServerRecord
-	err := s.db.QueryRow(query, name).Scan(&sr.ID, &sr.Name, &sr.Status, &sr.LastSeen,
-		&sr.CPUPercent, &sr.MemPercent, &sr.MemTotal, &sr.MemUsed,
-		&sr.DiskPercent, &sr.DiskTotal, &sr.DiskUsed,
-		&sr.NetRxRate, &sr.NetTxRate, &sr.NetRxBytes, &sr.NetTxBytes,
-		&sr.Load1, &sr.Load5, &sr.Load15, &sr.Uptime, &sr.TCPConns,
-		&sr.ProcessCount, &sr.OSName, &sr.KernelVersion)
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
-	return &sr, nil
+	defer rows.Close()
+
+	var servers []ServerRecord
+	for rows.Next() {
+		sr, err := scanServer(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		servers = append(servers, *sr)
+	}
+	return servers, rows.Err()
+}
+
+// GetServerByName returns a single server record, hidden or not. The report
+// path needs to see the flag before deciding whether to alert.
+func (s *Store) GetServerByName(name string) (*ServerRecord, error) {
+	query := `SELECT ` + serverColumns + ` FROM servers WHERE name = ?`
+
+	return scanServer(s.db.QueryRow(query, name).Scan)
+}
+
+// HideServer soft-deletes a server: it disappears from the dashboard and from
+// alerting, while its rows and history are kept. The flag survives later
+// reports, so an agent that is still running cannot bring it back; only
+// UnhideServer does. Returns false when no such server exists.
+func (s *Store) HideServer(name string) (bool, error) {
+	ok, err := s.serverExists(name)
+	if err != nil || !ok {
+		return false, err
+	}
+
+	if _, err := s.db.Exec(`UPDATE servers SET hidden = 1 WHERE name = ?`, name); err != nil {
+		return false, fmt.Errorf("hide server: %w", err)
+	}
+
+	// Drop the per-server alert bookkeeping: it would otherwise resurface as
+	// a stale cooldown or tolerance count after a restore.
+	if _, err := s.db.Exec(`DELETE FROM alert_cooldowns WHERE server_name = ?`, name); err != nil {
+		return true, fmt.Errorf("clear alert cooldowns: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM alert_tolerance WHERE server_name = ?`, name); err != nil {
+		return true, fmt.Errorf("clear alert tolerance: %w", err)
+	}
+	return true, nil
+}
+
+// UnhideServer restores a soft-deleted server.
+func (s *Store) UnhideServer(name string) (bool, error) {
+	ok, err := s.serverExists(name)
+	if err != nil || !ok {
+		return false, err
+	}
+	if _, err := s.db.Exec(`UPDATE servers SET hidden = 0 WHERE name = ?`, name); err != nil {
+		return false, fmt.Errorf("unhide server: %w", err)
+	}
+	return true, nil
+}
+
+// serverExists reports whether a name is known, hidden or not.
+func (s *Store) serverExists(name string) (bool, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM servers WHERE name = ?`, name).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // GetHistory returns historical reports for a server within the given time window.

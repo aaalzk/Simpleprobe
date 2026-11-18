@@ -12,6 +12,7 @@
 - **历史趋势**：带 Chart.js 图表的历史数据仪表盘
 - **站点可用性监控**：Server 端周期性探测任意 HTTP/HTTPS 站点（状态码/延迟），Dashboard 展示当前状态与 24 小时可用率，故障/恢复触发 Gotify 告警
 - **纯 Go SQLite**：使用 modernc.org/sqlite，无需 CGO，跨平台编译无忧
+- **主机管理**：主机随首个上报自动注册，删除走命令行软删除（`host list/delete/restore`），面板保持只读，避免误点
 
 ## 架构
 
@@ -178,15 +179,56 @@ sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host list
 # 软删除一台主机
 sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host delete old-box
 
-# 恢复
+# 恢复一台已隐藏的主机
 sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host restore old-box
 ```
 
-> **注意**
-> - 删除只影响面板与告警，**不会**去动那台机器上的 Agent。想彻底下线，还需要在那台机器上 `systemctl disable --now simpleprobe-agent`。
-> - 如果 Agent 仍在运行，它上报的数据会继续写进库里（恢复后历史是连续的），但**不会**让主机重新出现在面板上——`hidden` 标记只能由 `host restore` 清除。
-> - Server 使用 WAL 模式，可以在运行中执行这些命令；面板下一次刷新后生效。
-> - 这是软删除。确实需要连历史一起清除时，停掉 Server 后用手工 SQL 清理 `servers` / `reports` / `reports_1m` / `alerts` / `alert_cooldowns` / `alert_tolerance` 六张表中 `server_name` 匹配的行。
+`host` 子命令直接操作数据库，**不需要 API Token**，且可以在 Server 运行中执行（WAL 模式），面板下一次刷新后生效。
+
+### 彻底下线一台机器
+
+只删主机不够——Agent 还在跑的话那台机器照样在往库里写数据。完整下线流程是这样：
+
+```bash
+# 1. 在 Server 上隐藏该主机
+sudo /usr/local/bin/simpleprobe-server -c /etc/probe/server.yml host delete old-box
+
+# 2. 在 old-box 本机上停掉并卸载 Agent
+sudo systemctl disable --now simpleprobe-agent
+sudo rm -f /etc/systemd/system/simpleprobe-agent.service
+sudo systemctl daemon-reload
+sudo rm -f /usr/local/bin/simpleprobe-agent /etc/probe/agent.yml
+```
+
+顺序反过来也能用：先停 Agent 的话，主机在面板上会变成 `offline` 并继续挂着，所以**无论如何都要在 Server 上再删一次**。
+
+### 删除之后的行为
+
+- 面板不再显示该主机，`/api/servers` 不返回它，告警也不会再为它触发
+- 历史曲线和告警记录仍在库里，恢复后无缝接上
+- **Agent 仍在运行也不会让它复活**：上报的数据会继续入库，但 `hidden` 标记只能由 `host restore` 清除——删除权始终在运维手里
+- 离线判定和链路异常比例都会把隐藏主机排除在外，不会因为删了一台机器而误报「上报链路异常」
+
+### 彻底清除数据（不可恢复）
+
+软删除通常够用。确实要连历史一起清掉，停掉 Server 后手工执行：
+
+```bash
+sudo systemctl stop simpleprobe-server
+cp /path/to/probe.db /path/to/probe.db.bak   # 先备份
+sqlite3 /path/to/probe.db <<'SQL'
+DELETE FROM reports         WHERE server_name = 'old-box';
+DELETE FROM reports_1m      WHERE server_name = 'old-box';
+DELETE FROM alerts          WHERE server_name = 'old-box';
+DELETE FROM alert_cooldowns WHERE server_name = 'old-box';
+DELETE FROM alert_tolerance WHERE server_name = 'old-box';
+DELETE FROM servers         WHERE name        = 'old-box';
+VACUUM;
+SQL
+sudo systemctl start simpleprobe-server
+```
+
+`probe.db` 的实际路径看 `/etc/probe/server.yml` 里的 `db_path`。
 
 ## 反向代理
 
@@ -381,6 +423,8 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now simpleprobe-agent
 ```
+
+不再需要这台机器时，别忘了在 Server 上把主机隐藏掉，见[删除主机](#删除主机)。
 
 ## 从源码编译
 
